@@ -1,0 +1,27 @@
+.DS_Store
+/upstream/
+/.runtime/
+/tmp/
+/.playwright/
+/.playwright-cli/
+.env
+.env.local
+node_modules/
+target/
+dist/
+*.tsbuildinfo
+.yarn/install-state.gz
+
+# 本地协作说明与服务配置。
+AGENTS.md
+/docs/frontend-handoff.md
+/config/server.toml
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+*.pem
+*.key

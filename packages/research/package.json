@@ -1,0 +1,20 @@
+{
+  "name": "@research-canvas/research",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "license": "MPL-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./editor": "./src/editor/index.ts"
+  },
+  "dependencies": {
+    "@blocksuite/affine": "workspace:*",
+    "@preact/signals-core": "^1.8.0",
+    "lit": "^3.2.0",
+    "rxjs": "^7.8.1",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.21"
+  }
+}

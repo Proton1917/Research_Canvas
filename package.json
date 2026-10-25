@@ -1,0 +1,41 @@
+{
+  "name": "research-canvas",
+  "license": "MPL-2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "yarn@4.7.0",
+  "engines": {
+    "node": ">=22.23.4 <23.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/research",
+    "packages/ui",
+    "packages/blocksuite/packages/**/*"
+  ],
+  "scripts": {
+    "dev": "yarn workspace @research-canvas/web dev",
+    "build": "yarn workspace @research-canvas/web build",
+    "typecheck": "yarn workspace @research-canvas/web typecheck",
+    "preview": "yarn workspace @research-canvas/web preview"
+  },
+  "resolutions": {
+    "deep-equal": "npm:@nolyfill/deep-equal@^1",
+    "function-bind": "npm:@nolyfill/function-bind@^1",
+    "gopd": "npm:@nolyfill/gopd@^1",
+    "has-property-descriptors": "npm:@nolyfill/has-property-descriptors@^1",
+    "has-proto": "npm:@nolyfill/has-proto@^1",
+    "has-symbols": "npm:@nolyfill/has-symbols@^1",
+    "has-tostringtag": "npm:@nolyfill/has-tostringtag@^1",
+    "hasown": "npm:@nolyfill/hasown@^1",
+    "is-core-module": "npm:@nolyfill/is-core-module@^1",
+    "is-generator-function": "npm:@nolyfill/is-generator-function@^1",
+    "isarray": "npm:@nolyfill/isarray@^1",
+    "set-function-length": "npm:@nolyfill/set-function-length@^1",
+    "side-channel": "npm:@nolyfill/side-channel@^1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "5.8.2"
+  }
+}
