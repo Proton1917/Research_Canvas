@@ -13,9 +13,9 @@ yarn_cli() { node "$ROOT/.yarn/releases/yarn-4.7.0.cjs" "$@"; }
 
 case "${1:-dev}" in
   install) yarn_cli install --immutable ;;
-  dev) exec node "$ROOT/.yarn/releases/yarn-4.7.0.cjs" workspace @research-canvas/web dev ;;
-  typecheck) yarn_cli workspace @research-canvas/web typecheck ;;
-  build) yarn_cli workspace @research-canvas/web build ;;
-  preview) exec node "$ROOT/.yarn/releases/yarn-4.7.0.cjs" workspace @research-canvas/web preview ;;
+  dev) exec node "$ROOT/.yarn/releases/yarn-4.7.0.cjs" dev ;;
+  typecheck) yarn_cli typecheck ;;
+  build) yarn_cli build ;;
+  preview) exec node "$ROOT/.yarn/releases/yarn-4.7.0.cjs" preview ;;
   *) printf '用法：bash scripts/web.sh install|dev|typecheck|build|preview\n' >&2; exit 2 ;;
 esac

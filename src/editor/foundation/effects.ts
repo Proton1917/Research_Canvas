@@ -1,0 +1,70 @@
+import { BlockSelection } from '@editor/components/block-selection';
+import { BlockZeroWidth } from '@editor/components/block-zero-width';
+import { effects as componentCaptionEffects } from '@editor/components/caption';
+import { effects as componentCardStyleDropdownMenuEffects } from '@editor/components/card-style-dropdown-menu';
+import { effects as componentCitationEffects } from '@editor/components/citation';
+import { effects as componentColorPickerEffects } from '@editor/components/color-picker';
+import { effects as componentContextMenuEffects } from '@editor/components/context-menu';
+import { effects as componentDatePickerEffects } from '@editor/components/date-picker';
+import { effects as componentDropIndicatorEffects } from '@editor/components/drop-indicator';
+import { effects as componentEdgelessLineStylesEffects } from '@editor/components/edgeless-line-styles-panel';
+import { effects as componentEdgelessLineWidthEffects } from '@editor/components/edgeless-line-width-panel';
+import { effects as componentEdgelessShapeColorPickerEffects } from '@editor/components/edgeless-shape-color-picker';
+import { effects as componentEmbedCardModalEffects } from '@editor/components/embed-card-modal';
+import { FilterableListComponent } from '@editor/components/filterable-list';
+import { effects as componentHighlightDropdownMenuEffects } from '@editor/components/highlight-dropdown-menu';
+import { IconButton } from '@editor/components/icon-button';
+import { effects as componentLinkPreviewEffects } from '@editor/components/link-preview';
+import { effects as componentLinkedDocTitleEffects } from '@editor/components/linked-doc-title';
+import { effects as componentOpenDocDropdownMenuEffects } from '@editor/components/open-doc-dropdown-menu';
+import { effects as componentPortalEffects } from '@editor/components/portal';
+import { effects as componentResourceEffects } from '@editor/components/resource';
+import { effects as componentSizeDropdownMenuEffects } from '@editor/components/size-dropdown-menu';
+import { effects as componentSliderEffects } from '@editor/components/slider';
+import { SmoothCorner } from '@editor/components/smooth-corner';
+import { effects as componentToggleButtonEffects } from '@editor/components/toggle-button';
+import { ToggleSwitch } from '@editor/components/toggle-switch';
+import { effects as componentToolbarEffects } from '@editor/components/toolbar';
+import { effects as componentTooltipContentWithShortcutEffects } from '@editor/components/tooltip-content-with-shortcut';
+import { effects as componentViewDropdownMenuEffects } from '@editor/components/view-dropdown-menu';
+import { effects as richTextEffects } from '@editor/rich-text/effects';
+import { effects as dataViewEffects } from '@editor/data-view/effects';
+import { effects as stdEffects } from '@editor/runtime/effects';
+
+export function effects() {
+  stdEffects();
+
+  dataViewEffects();
+  richTextEffects();
+
+  componentCaptionEffects();
+  componentContextMenuEffects();
+  componentDatePickerEffects();
+  componentPortalEffects();
+  componentToolbarEffects();
+  componentDropIndicatorEffects();
+  componentToggleButtonEffects();
+  componentColorPickerEffects();
+  componentEmbedCardModalEffects();
+  componentLinkPreviewEffects();
+  componentLinkedDocTitleEffects();
+  componentCardStyleDropdownMenuEffects();
+  componentCitationEffects();
+  componentHighlightDropdownMenuEffects();
+  componentViewDropdownMenuEffects();
+  componentTooltipContentWithShortcutEffects();
+  componentSizeDropdownMenuEffects();
+  componentSliderEffects();
+  componentEdgelessLineWidthEffects();
+  componentEdgelessLineStylesEffects();
+  componentEdgelessShapeColorPickerEffects();
+  componentOpenDocDropdownMenuEffects();
+  componentResourceEffects();
+
+  customElements.define('icon-button', IconButton);
+  customElements.define('smooth-corner', SmoothCorner);
+  customElements.define('toggle-switch', ToggleSwitch);
+  customElements.define('affine-filterable-list', FilterableListComponent);
+  customElements.define('block-zero-width', BlockZeroWidth);
+  customElements.define('affine-block-selection', BlockSelection);
+}

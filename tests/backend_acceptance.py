@@ -11,7 +11,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = ROOT / ".runtime" / "backend-acceptance.json"
-SOURCE = ROOT / "docs" / "research_canvas_open_source_review_2026-10-24 (1)(1).pdf"
+SOURCE = ROOT / "legal" / "research-material.pdf"
 BASE = "http://127.0.0.1:8787/api"
 TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
 

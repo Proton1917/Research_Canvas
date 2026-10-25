@@ -12,7 +12,7 @@ bash scripts/backend.sh build
 bash scripts/backend.sh run
 ```
 
-`build` 使用 Cargo 的开发构建配置，并将可执行文件安装到 `.runtime/bin/`。`run` 通过 Cargo 构建并启动；已安装的程序可通过 `bash scripts/backend.sh start` 启动。停止前台服务使用 `Ctrl+C`。服务接收终止信号后取消进行中的模型请求，将状态记录为 `interrupted`，并结束数据库操作。
+`build` 使用根目录 Cargo 开发构建配置，并将可执行文件安装到 `.runtime/bin/`。`run` 通过 Cargo 构建并启动；已安装的程序可通过 `bash scripts/backend.sh start` 启动。服务同时提供 `dist/` 中的界面和 HTTP API。停止前台服务使用 `Ctrl+C`。服务接收终止信号后取消进行中的模型请求，将状态记录为 `interrupted`，并结束数据库操作。
 
 默认地址为 `http://127.0.0.1:8787`，本地配置文件是 `config/server.toml`，示例文件随仓库提供。设置 `RC_CONFIG` 可选择项目内另一份服务配置。Python 验证需要 Python 3 和 `requests`，下列命令沿用开发环境中的 `conda base`；其他环境使用对应 Python 解释器执行相同脚本。
 
@@ -22,8 +22,8 @@ bash scripts/backend.sh run
 | --- | --- |
 | SQLite | `.runtime/data/research-canvas.sqlite3` |
 | Cargo 下载缓存 | `.runtime/cargo-home/` |
-| Cargo 构建输出 | `.runtime/target/` |
-| 安装后的可执行文件 | `.runtime/bin/research-canvas-server` |
+| Cargo 构建输出 | `target/` |
+| 安装后的可执行文件 | `.runtime/bin/research-canvas` |
 | PDF 提取中间文件 | `tmp/backend/`，提取操作结束后自动释放 |
 | 服务与构建日志 | `.runtime/logs/` |
 
@@ -43,7 +43,7 @@ PDF 文本提取调用本机 Poppler 的 `pdftotext`。导入文件原始字节�
 
 锚点保存历史版本、文本块、UTF-16 偏移、原文及周边内容。定位使用原文本块和周边文本，返回精确、重新定位、已变化、缺失或歧义状态。改写提案确认时再次核对当前文稿版本与原选段；替换后清除旧编辑器表示，由前端根据新文本块重建。撤销提案生成新的历史版本。
 
-参与 AI 上下文的关系按方向遍历祖先，按连线顺序去重。自由关系可以保留循环；启用上下文传递时验证有向循环。标题与正文搜索使用 Atomic 的 Reciprocal Rank Fusion 排名合并方法。
+参与 AI 上下文的关系按方向遍历祖先，按连线顺序去重。自由关系可以保留循环；启用上下文传递时验证有向循环。标题与正文搜索使用 Reciprocal Rank Fusion 合并排名。
 
 完整 JSON 归档保存文稿版本、关系、锚点、运行记录、画布和资产，支持在工作区标识不存在的数据库中恢复。ZIP 同时包含文稿 Markdown、关系 JSON、关系 SVG、原始资产与完整归档。
 

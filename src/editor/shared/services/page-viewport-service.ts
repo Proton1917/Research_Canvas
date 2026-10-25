@@ -1,0 +1,15 @@
+import { createIdentifier } from '@editor/platform/di';
+import type { ExtensionType } from '@editor/document';
+import { Subject } from 'rxjs';
+
+import type { Viewport } from '../types';
+
+export const PageViewportService = createIdentifier<Subject<Viewport>>(
+  'PageViewportService'
+);
+
+export const PageViewportServiceExtension: ExtensionType = {
+  setup: di => {
+    di.addImpl(PageViewportService, () => new Subject<Viewport>());
+  },
+};

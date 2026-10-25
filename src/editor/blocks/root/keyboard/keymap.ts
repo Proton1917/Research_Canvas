@@ -1,0 +1,16 @@
+import { KeymapExtension } from '@editor/runtime';
+
+export const fallbackKeymap = KeymapExtension(() => {
+  return {
+    Tab: ctx => {
+      const event = ctx.get('defaultState').event;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    'Shift-Tab': ctx => {
+      const event = ctx.get('defaultState').event;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+  };
+});

@@ -1,0 +1,620 @@
+{
+  "project": "Research Canvas",
+  "title": "Research Canvas 界面流程图",
+  "roots": [
+    "offline",
+    "canvas"
+  ],
+  "nodes": [
+    {
+      "id": "offline",
+      "title": "后端未连接",
+      "image": "screenshots/offline-image-0.png",
+      "group": "工作区",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "后端未启动；顶栏显示“后端未连接 · 重试”，主区等待并可立即重试",
+      "evidenceNote": "Vite 代理指向未监听端口实测。"
+    },
+    {
+      "id": "workspace",
+      "title": "工作区管理",
+      "image": "screenshots/workspace-image-0.png",
+      "group": "工作区",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "新建、重命名、切换工作区，从 JSON 归档恢复",
+      "evidenceNote": "2026-10-24 界面联调截图，对应本节点列出的操作与前置条件。"
+    },
+    {
+      "id": "canvas",
+      "title": "主画布",
+      "image": "screenshots/canvas-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "同一文稿以同步卡片出现在画布；内容与布局分开保存"
+    },
+    {
+      "id": "pdf_import",
+      "title": "PDF 导入后放入画布",
+      "image": "screenshots/pdf_import-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "导入 4 页 PDF，自动放置卡片",
+      "evidenceNote": "2026-10-24 界面联调截图，对应本节点列出的操作与前置条件。"
+    },
+    {
+      "id": "peek",
+      "title": "卡片内编辑",
+      "image": "screenshots/peek-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "overlay",
+      "evidence": "observed",
+      "state": "双击卡片或“编辑内容”打开覆盖编辑器，修改同步到所有引用",
+      "evidenceNote": "2026-10-24 界面联调截图，对应本节点列出的操作与前置条件。"
+    },
+    {
+      "id": "frame",
+      "title": "框选与布局保存",
+      "image": "screenshots/frame-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "框、缩放、平移保存为画布修订",
+      "evidenceNote": "2026-10-24 界面联调截图，对应本节点列出的操作与前置条件。"
+    },
+    {
+      "id": "connector",
+      "title": "卡片连线",
+      "image": "screenshots/connector-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "连接器工具从一张卡片拉到另一张，自动建立工作区关系"
+    },
+    {
+      "id": "relation",
+      "title": "关系编辑",
+      "image": "screenshots/relation-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "对应对象、关系类型、成立条件、反例、出处与状态；重载后保持"
+    },
+    {
+      "id": "doc",
+      "title": "文稿编辑与公式",
+      "image": "screenshots/doc-image-0.png",
+      "group": "文稿",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "BlockSuite 富文本；行内公式与公式块",
+      "evidenceNote": "2026-10-24 界面联调截图，对应本节点列出的操作与前置条件。"
+    },
+    {
+      "id": "selection",
+      "title": "选段工具栏",
+      "image": "screenshots/selection-image-0.png",
+      "group": "文稿",
+      "route": "/",
+      "kind": "overlay",
+      "evidence": "observed",
+      "state": "选中文字后出现：讨论选段 / 改写选段 / 记为批注"
+    },
+    {
+      "id": "material",
+      "title": "选段作为讨论材料",
+      "image": "screenshots/material-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "记录文稿版本与 UTF-16 片段锚点；原文高亮"
+    },
+    {
+      "id": "context",
+      "title": "上下文预览",
+      "image": "screenshots/context-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "展示实际发送给模型的完整消息与来源"
+    },
+    {
+      "id": "streaming",
+      "title": "流式生成",
+      "image": "screenshots/streaming-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "SSE 推送；用户滚动后保持阅读位置"
+    },
+    {
+      "id": "run_done",
+      "title": "生成完成",
+      "image": "screenshots/run_done-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "回答按 Markdown 渲染（表格、列表、公式），可加入画布或继续讨论"
+    },
+    {
+      "id": "branch",
+      "title": "从此分叉",
+      "image": "screenshots/branch-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "以已有讨论为材料开始新的分支"
+    },
+    {
+      "id": "picked",
+      "title": "选择两个分支",
+      "image": "screenshots/picked-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "勾选两个讨论后出现“并排比较 / 合并为新讨论”"
+    },
+    {
+      "id": "compare",
+      "title": "并排比较",
+      "image": "screenshots/compare-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "两个分支的回答、模型、上下文来源并列"
+    },
+    {
+      "id": "merge_ctx",
+      "title": "合并上下文预览",
+      "image": "screenshots/merge_ctx-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "合并讨论的上下文包含两个分支及其祖先来源"
+    },
+    {
+      "id": "tree",
+      "title": "讨论脉络",
+      "image": "screenshots/tree-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "合并节点只挂在最近的直接分支下，标注“合并 2 个分支”"
+    },
+    {
+      "id": "rewrite",
+      "title": "改写选段",
+      "image": "screenshots/rewrite-image-0.png",
+      "group": "修改",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "改写模式要求恰好一个精确选段"
+    },
+    {
+      "id": "proposal",
+      "title": "AI 修改预览",
+      "image": "screenshots/proposal-image-0.png",
+      "group": "修改",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "确认前原文不变；选段差异与所在段落修改后对照"
+    },
+    {
+      "id": "applied",
+      "title": "已写入修改",
+      "image": "screenshots/applied-image-0.png",
+      "group": "修改",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "确认后生成新版本，可撤销"
+    },
+    {
+      "id": "reverted",
+      "title": "撤销修改",
+      "image": "screenshots/reverted-image-0.png",
+      "group": "修改",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "撤销后原文恢复并生成新版本"
+    },
+    {
+      "id": "anchors",
+      "title": "锚点状态",
+      "image": "screenshots/anchors-image-0.png",
+      "group": "版本与锚点",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "原文修订后：已重定位 / 原文已改，并给出原引用版本"
+    },
+    {
+      "id": "anchor_version",
+      "title": "引用版本",
+      "image": "screenshots/anchor_version-image-0.png",
+      "group": "版本与锚点",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "打开锚点记录时的历史版本并标出引用片段"
+    },
+    {
+      "id": "versions",
+      "title": "版本列表",
+      "image": "screenshots/versions-image-0.png",
+      "group": "版本与锚点",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "查看与对比、恢复为新版本"
+    },
+    {
+      "id": "version_compare",
+      "title": "版本查看与对比",
+      "image": "screenshots/version_compare-image-0.png",
+      "group": "版本与锚点",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed"
+    },
+    {
+      "id": "pdf_select",
+      "title": "PDF 选段",
+      "image": "screenshots/pdf_select-image-0.png",
+      "group": "PDF",
+      "route": "/",
+      "kind": "overlay",
+      "evidence": "observed",
+      "state": "PDF 文稿只读；工具栏显示页码，改写不可用"
+    },
+    {
+      "id": "pdf_page",
+      "title": "PDF 原页",
+      "image": "screenshots/pdf_page-image-0.png",
+      "group": "PDF",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "pdf.js 渲染原始页面，可翻页"
+    },
+    {
+      "id": "search",
+      "title": "检索",
+      "image": "screenshots/search-image-0.png",
+      "group": "归档",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "⌘K 检索文稿与讨论"
+    },
+    {
+      "id": "archive_conflict",
+      "title": "归档恢复冲突",
+      "image": "screenshots/archive_conflict-image-0.png",
+      "group": "归档",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "目标工作区标识已存在时后端返回 409，界面提示原因"
+    },
+    {
+      "id": "archive_restored",
+      "title": "归档恢复完成",
+      "image": "screenshots/archive_restored-image-0.png",
+      "group": "归档",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "在空数据库实例中从导出的 JSON 恢复完整工作区",
+      "evidenceNote": "独立后端实例（tmp 下的配置与数据库，端口 8797）与 Vite 5174 实测。"
+    },
+    {
+      "id": "dark",
+      "title": "深色主题",
+      "image": "screenshots/dark-image-0.png",
+      "group": "适配",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "跟随系统或手动切换"
+    },
+    {
+      "id": "mobile_doc",
+      "title": "窄屏文稿",
+      "image": "screenshots/mobile_doc-image-0.png",
+      "group": "适配",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "390px 宽；侧栏与研究面板收起为抽屉，无横向滚动"
+    },
+    {
+      "id": "mobile_panel",
+      "title": "窄屏研究面板",
+      "image": "screenshots/mobile_panel-image-0.png",
+      "group": "适配",
+      "route": "/",
+      "kind": "drawer",
+      "evidence": "observed"
+    }
+  ],
+  "edges": [
+    {
+      "from": "offline",
+      "to": "canvas",
+      "action": "后端启动后自动重连",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "workspace",
+      "action": "点击工作区名称",
+      "evidence": "observed",
+      "back": "完成"
+    },
+    {
+      "from": "canvas",
+      "to": "pdf_import",
+      "action": "导入 PDF",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "peek",
+      "action": "双击卡片 / 编辑内容",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "canvas",
+      "to": "frame",
+      "action": "框工具 F",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "connector",
+      "action": "连接器工具 C 拖到另一张卡片",
+      "evidence": "observed"
+    },
+    {
+      "from": "connector",
+      "to": "relation",
+      "action": "选中连线或在关系面板选择",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "doc",
+      "action": "打开精读 / 侧栏文稿",
+      "evidence": "observed"
+    },
+    {
+      "from": "doc",
+      "to": "selection",
+      "action": "选中文字",
+      "evidence": "observed"
+    },
+    {
+      "from": "selection",
+      "to": "material",
+      "action": "讨论选段",
+      "evidence": "observed"
+    },
+    {
+      "from": "material",
+      "to": "context",
+      "action": "预览上下文",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "material",
+      "to": "streaming",
+      "action": "发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "streaming",
+      "to": "run_done",
+      "action": "生成完成",
+      "evidence": "observed"
+    },
+    {
+      "from": "run_done",
+      "to": "branch",
+      "action": "从此分叉 / 继续讨论",
+      "evidence": "observed"
+    },
+    {
+      "from": "branch",
+      "to": "streaming",
+      "action": "发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "run_done",
+      "to": "picked",
+      "action": "勾选两个讨论",
+      "evidence": "observed"
+    },
+    {
+      "from": "picked",
+      "to": "compare",
+      "action": "并排比较",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "picked",
+      "to": "merge_ctx",
+      "action": "合并为新讨论 → 预览上下文",
+      "evidence": "observed"
+    },
+    {
+      "from": "merge_ctx",
+      "to": "tree",
+      "action": "发送并完成",
+      "evidence": "observed"
+    },
+    {
+      "from": "compare",
+      "to": "merge_ctx",
+      "action": "合并为新讨论",
+      "evidence": "observed"
+    },
+    {
+      "from": "run_done",
+      "to": "canvas",
+      "action": "加入画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "selection",
+      "to": "rewrite",
+      "action": "改写选段",
+      "evidence": "observed"
+    },
+    {
+      "from": "rewrite",
+      "to": "proposal",
+      "action": "发送；生成后自动打开",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "proposal",
+      "to": "applied",
+      "action": "确认修改",
+      "evidence": "observed"
+    },
+    {
+      "from": "applied",
+      "to": "reverted",
+      "action": "撤销修改",
+      "evidence": "observed"
+    },
+    {
+      "from": "selection",
+      "to": "anchors",
+      "action": "记为批注",
+      "evidence": "observed"
+    },
+    {
+      "from": "anchors",
+      "to": "anchor_version",
+      "action": "查看引用版本",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "doc",
+      "to": "versions",
+      "action": "版本",
+      "evidence": "observed"
+    },
+    {
+      "from": "versions",
+      "to": "version_compare",
+      "action": "查看与对比",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "versions",
+      "to": "anchors",
+      "action": "恢复为新版本后锚点回到原位",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "pdf_select",
+      "action": "打开 PDF 来源并选中文字",
+      "evidence": "observed"
+    },
+    {
+      "from": "pdf_select",
+      "to": "pdf_page",
+      "action": "记为批注 → PDF 原页",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "canvas",
+      "to": "search",
+      "action": "⌘K",
+      "evidence": "observed",
+      "back": "Esc"
+    },
+    {
+      "from": "canvas",
+      "to": "archive_conflict",
+      "action": "导出 JSON 后恢复到同一后端",
+      "evidence": "observed"
+    },
+    {
+      "from": "workspace",
+      "to": "archive_restored",
+      "action": "从 JSON 归档恢复（空数据库）",
+      "evidence": "observed"
+    },
+    {
+      "from": "doc",
+      "to": "dark",
+      "action": "切换深色",
+      "evidence": "observed"
+    },
+    {
+      "from": "doc",
+      "to": "mobile_doc",
+      "action": "窄屏",
+      "evidence": "observed"
+    },
+    {
+      "from": "mobile_doc",
+      "to": "mobile_panel",
+      "action": "打开研究面板",
+      "evidence": "observed",
+      "back": "关闭"
+    }
+  ],
+  "pending": [
+    {
+      "title": "中文输入法组合输入",
+      "reason": "自动化浏览器无法驱动系统输入法；输入框按 isComposing 跳过回车发送，已从源码确认，未做真机 IME 操作。"
+    },
+    {
+      "title": "保存冲突（409）提示条",
+      "reason": "需要两个客户端同时编辑同一文稿；冲突处理代码已接入，本轮未构造并发写入。"
+    },
+    {
+      "title": "图片与 Markdown/文本导入",
+      "reason": "本轮实测了 PDF 导入；其他格式共用同一导入入口，未逐一操作。"
+    }
+  ],
+  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。"
+}

@@ -1,0 +1,60 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "useDefineForClassFields": false,
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@editor/*": [
+        "src/editor/*"
+      ],
+      "@research": [
+        "src/research/index.ts"
+      ],
+      "@research/*": [
+        "src/research/*"
+      ],
+      "@ui": [
+        "src/ui/index.ts"
+      ],
+      "@ui/*": [
+        "src/ui/*"
+      ]
+    },
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "target",
+    "dist",
+    "src/**/__tests__/**"
+  ]
+}
