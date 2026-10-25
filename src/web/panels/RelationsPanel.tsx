@@ -3,15 +3,47 @@ import type { Claim, ClaimStatus, Relation } from '@research';
 import { Button, SegmentedControl } from '@ui';
 import { useEffect, useMemo, useState } from 'react';
 
-import { app, createRelation, deleteRelation, emptyClaim, openDocument, setDialogs, updateComposer, updateRelation, useApp } from '../app/model';
+import {
+  app, createRelation, deleteRelation, emptyClaim, hideRelationOnCanvas, openBridge, openDocument, setDialogs, showRelationOnCanvas,
+  updateComposer, updateRelation, useApp,
+} from '../app/model';
+import { useSession } from '../app/useSession';
 import { AnchorStatusChip, Chip, EmptyState, KindIcon, SectionTitle } from '../components/common';
 import { CLAIM_STATUS_LABEL, excerpt } from '../lib/format';
 
+/** 面板内可直接设置的状态；有支持、已确立、被反驳需在学科桥中附证据人工确认。 */
 const STATUSES: { id: ClaimStatus; label: string }[] = [
   { id: 'analogy', label: CLAIM_STATUS_LABEL.analogy },
-  { id: 'candidate', label: '待验证候选' },
-  { id: 'verified', label: CLAIM_STATUS_LABEL.verified },
+  { id: 'candidate', label: CLAIM_STATUS_LABEL.candidate },
 ];
+
+/** 关系在画布中的显示：本画布的连线视图数、隐藏状态与其他已载入画布。 */
+function Placement({ relation }: { relation: Relation }) {
+  const session = useSession();
+  const view = useApp(state => state.view);
+  const canvases = useApp(state => state.summary?.canvases ?? []);
+  const canvasId = view.type === 'canvas' ? view.id : null;
+  const placement = session?.relationPlacement(relation.id) ?? [];
+  const here = placement.find(item => item.canvasId === canvasId);
+  const elsewhere = placement.filter(item => item.canvasId !== canvasId);
+  return (
+    <div className="space-y-1 rounded-lg bg-[var(--cds-alpha-1)] px-2.5 py-2 text-[11px] text-ink-secondary" data-testid="relation-placement">
+      <span className="font-medium text-ink-muted">画布显示</span>
+      {canvasId ? (
+        <p className="flex flex-wrap items-center gap-1.5">
+          {here?.hidden ? <Chip tone="warn">本画布已隐藏</Chip> : here?.views ? <Chip tone="ok">本画布 {here.views} 条连线</Chip> : <Chip>本画布未放置</Chip>}
+          {here?.hidden || !here?.views
+            ? <Button size="xs" variant="ghost" onClick={() => showRelationOnCanvas(relation.id)}>在本画布显示</Button>
+            : <Button size="xs" variant="ghost" onClick={() => hideRelationOnCanvas(relation.id)}>在本画布隐藏</Button>}
+        </p>
+      ) : <p>打开画布后可调整显示。</p>}
+      {elsewhere.map(item => (
+        <p key={item.canvasId}>{canvases.find(canvas => canvas.id === item.canvasId)?.name ?? '画布'}：{item.hidden ? '已隐藏' : `${item.views} 条连线`}</p>
+      ))}
+      <p className="text-ink-muted">删除画布连线只影响该画布的显示；删除研究关系使用下方的显式操作。</p>
+    </div>
+  );
+}
 
 const KIND_SUGGESTIONS = ['关联', '类比', '结构同构', '推导', '支持', '反驳', '应用', '对照'];
 
@@ -72,7 +104,8 @@ function RelationEditor({ relation }: { relation: Relation }) {
   const [sourceInput, setSourceInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setDraft(toDraft(relation)); setError(null); }, [relation]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  useEffect(() => { setDraft(toDraft(relation)); setError(null); setConfirmDelete(false); }, [relation]);
 
   const dirty = JSON.stringify(toDraft(relation)) !== JSON.stringify(draft);
   const relatedAnchors = anchors.filter(anchor => anchor.document_id === draft.source_id || anchor.document_id === draft.target_id);
@@ -94,14 +127,17 @@ function RelationEditor({ relation }: { relation: Relation }) {
       include_in_context: draft.include_in_context,
       context_order: draft.context_order,
       claim: draft.claimEnabled ? draft.claim : null,
+      expected_claim_revision: relation.claim?.revision,
     });
     setSaving(false);
     if (!result) setError('保存未完成，修改仍保留在表单中');
   };
 
   const docOption = (id: string) => documents.find(doc => doc.id === id);
+  const canvasId = app.get().view.type === 'canvas' ? (app.get().view as { id: string }).id : null;
   return (
     <div className="space-y-3 rounded-xl border border-line bg-surface-2 p-3">
+      <Placement relation={relation} />
       <div className="space-y-1.5">
         <label className="text-[11px] font-medium text-ink-muted">对应对象</label>
         <div className="flex items-center gap-1.5">
@@ -140,7 +176,10 @@ function RelationEditor({ relation }: { relation: Relation }) {
           <span className="text-[11px] font-medium text-ink-muted">论证记录</span>
           {draft.claimEnabled && <Button size="xs" variant="ghost" onClick={() => setDraft({ ...draft, claimEnabled: false, claim: emptyClaim })}>清除论证</Button>}
         </div>
-        <SegmentedControl ariaLabel="关系状态" size="sm" items={STATUSES} value={draft.claim.status} onChange={status => patchClaim({ status })} />
+        {draft.claim.status === 'analogy' || draft.claim.status === 'candidate'
+          ? <SegmentedControl ariaLabel="关系状态" size="sm" items={STATUSES} value={draft.claim.status} onChange={status => patchClaim({ status })} />
+          : <p className="flex items-center gap-1.5 text-xs"><Chip tone="ok">{CLAIM_STATUS_LABEL[draft.claim.status]}</Chip><span className="text-ink-muted">状态变更在学科桥中附证据确认</span></p>}
+        {relation.claim?.review_required && <p className="text-[11px] text-[var(--rc-warn)]">待复核：来源或研究内容已变化，原判断保留。</p>}
         <textarea aria-label="成立条件" rows={2} className="rc-input resize-y text-[13px]" placeholder="成立条件：在什么假设、尺度或范围内对应成立" value={draft.claim.conditions} onChange={event => patchClaim({ conditions: event.target.value })} />
         <textarea aria-label="反例" rows={2} className="rc-input resize-y text-[13px]" placeholder="反例或失效情形" value={draft.claim.counterexamples} onChange={event => patchClaim({ counterexamples: event.target.value })} />
         <div className="space-y-1.5">
@@ -185,7 +224,16 @@ function RelationEditor({ relation }: { relation: Relation }) {
           updateComposer({ mode: 'relation', documentIds: [draft.source_id, draft.target_id], anchorIds: draft.claim.sources.filter(item => item.startsWith('anchor:')).map(item => item.slice(7)), preview: null, previewKey: null });
           app.set({ tab: 'discuss', panelOpen: true });
         }}>用 AI 分析此关系</Button>
-        <Button size="sm" variant="ghost" className="ml-auto text-[var(--rc-bad)]" icon={<DeleteIcon width={14} height={14} />} onClick={() => void deleteRelation(relation.id)}>删除</Button>
+        <Button size="sm" variant="secondary" onClick={() => openBridge(relation.id, canvasId)}>研究这个联系</Button>
+        {confirmDelete ? (
+          <span className="ml-auto flex items-center gap-1">
+            <span className="text-[11px] text-[var(--rc-bad)]">删除后所有画布中的对应连线一并移除</span>
+            <Button size="xs" variant="ghost" onClick={() => setConfirmDelete(false)}>取消</Button>
+            <Button size="xs" variant="primary" onClick={() => void deleteRelation(relation.id)}>确认删除</Button>
+          </span>
+        ) : (
+          <Button size="sm" variant="ghost" className="ml-auto text-[var(--rc-bad)]" icon={<DeleteIcon width={14} height={14} />} onClick={() => setConfirmDelete(true)}>删除研究关系</Button>
+        )}
       </div>
     </div>
   );
@@ -243,7 +291,8 @@ export function RelationsPanel() {
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink-muted">
                     <Chip tone={relation.kind === 'context' ? 'muted' : 'clay'}>{relation.kind === 'context' ? '讨论来源' : relation.kind}</Chip>
-                    {relation.claim && <Chip tone={relation.claim.status === 'verified' ? 'ok' : relation.claim.status === 'candidate' ? 'warn' : 'muted'}>{CLAIM_STATUS_LABEL[relation.claim.status]}</Chip>}
+                    {relation.claim && <Chip tone={['verified', 'established', 'supported'].includes(relation.claim.status) ? 'ok' : relation.claim.status === 'refuted' ? 'bad' : relation.claim.status === 'candidate' ? 'warn' : 'muted'}>{CLAIM_STATUS_LABEL[relation.claim.status]}</Chip>}
+                    {relation.claim?.review_required && <Chip tone="warn">待复核</Chip>}
                     {relation.claim && relation.claim.sources.length > 0 && <span>{relation.claim.sources.length} 条出处</span>}
                     {relation.label && <span className="truncate">{excerpt(relation.label, 40)}</span>}
                   </p>

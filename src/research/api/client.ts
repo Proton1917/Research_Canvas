@@ -1,5 +1,5 @@
 import type {
-  Anchor, AnchorResolution, ApiErrorBody, Canvas, CanvasObject, ContextRequest, Content, DocumentKind,
+  Anchor, AnchorResolution, ApiErrorBody, Canvas, CanvasAction, CanvasProposal, CanvasProposalResult, Capabilities, ReviewRequest, SceneContextRequest, CanvasObject, ContextRequest, Content, DocumentKind,
   DocumentMetadata, DocumentVersion, Health, ImportResult, ModelCatalog, Proposal, ProposalResult, Relation,
   RelationInput, ResearchContext, ResearchDocument, Run, RunProgress, SearchHit, Workspace, WorkspaceSummary,
 } from './types';
@@ -57,6 +57,17 @@ const enc = encodeURIComponent;
 
 export const api = {
   health: () => request<Health>('/health'),
+  /** 能力发现；旧服务返回 404，调用方按“尚未接通”处理。 */
+  capabilities: async (): Promise<Capabilities | null> => {
+    try {
+      // 当前服务的未知 /api 路径会落到界面静态文件的回退页（200 HTML），非 JSON 对象同样视为未接通
+      const body = await request<unknown>('/capabilities');
+      return body && typeof body === 'object' && !Array.isArray(body) ? (body as Capabilities) : null;
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) return null;
+      throw error;
+    }
+  },
   models: () => request<ModelCatalog>('/models'),
 
   listWorkspaces: () => request<Workspace[]>('/workspaces'),
@@ -83,6 +94,8 @@ export const api = {
     request<Relation>(`/workspaces/${enc(workspaceId)}/relations`, { method: 'POST', json: input }),
   updateRelation: (id: string, input: RelationInput) => request<Relation>(`/relations/${enc(id)}`, { method: 'PATCH', json: input }),
   deleteRelation: (id: string) => request<void>(`/relations/${enc(id)}`, { method: 'DELETE' }),
+  getRelation: (id: string) => request<Relation>(`/relations/${enc(id)}`),
+  reviewRelation: (id: string, input: ReviewRequest) => request<Relation>(`/relations/${enc(id)}/review`, { method: 'POST', json: input }),
 
   createAnchor: (workspaceId: string, input: { document_id: string; version: number; block_id: string; quote: string; start_utf16?: number }) =>
     request<Anchor>(`/workspaces/${enc(workspaceId)}/anchors`, { method: 'POST', json: input }),
@@ -92,6 +105,18 @@ export const api = {
   createContext: (workspaceId: string, input: ContextRequest) =>
     request<ResearchContext>(`/workspaces/${enc(workspaceId)}/contexts`, { method: 'POST', json: input }),
   getContext: (id: string) => request<ResearchContext>(`/contexts/${enc(id)}`),
+  createSceneContext: (workspaceId: string, input: SceneContextRequest) =>
+    request<ResearchContext>(`/workspaces/${enc(workspaceId)}/scene-contexts`, { method: 'POST', json: input }),
+
+  getCanvasProposal: (id: string) => request<CanvasProposal>(`/canvas-proposals/${enc(id)}`),
+  updateCanvasProposal: (id: string, input: { expected_revision: number; actions: CanvasAction[]; expected_canvas_revision?: number }) =>
+    request<CanvasProposal>(`/canvas-proposals/${enc(id)}`, { method: 'PATCH', json: input }),
+  applyCanvasProposal: (id: string, input: { expected_revision: number; expected_canvas_revision: number; editor_state?: unknown }) =>
+    request<CanvasProposalResult>(`/canvas-proposals/${enc(id)}/apply`, { method: 'POST', json: input }),
+  revertCanvasProposal: (id: string, input: { expected_revision: number; expected_canvas_revision: number }) =>
+    request<CanvasProposalResult>(`/canvas-proposals/${enc(id)}/revert`, { method: 'POST', json: input }),
+  rejectCanvasProposal: (id: string, input: { expected_revision: number }) =>
+    request<CanvasProposal>(`/canvas-proposals/${enc(id)}/reject`, { method: 'POST', json: input }),
 
   startRun: (workspaceId: string, input: { context_id: string; model?: string; max_output_tokens?: number }) =>
     request<Run>(`/workspaces/${enc(workspaceId)}/runs`, { method: 'POST', json: input }),

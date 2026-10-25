@@ -33,13 +33,17 @@ export const ANCHOR_STATUS_HINT: Record<AnchorStatus, string> = {
   ambiguous: '当前版本中有多处相同片段，无法唯一定位',
 };
 
+/** 五种研究状态；历史值 verified 按“已确立”显示。 */
 export const CLAIM_STATUS_LABEL: Record<ClaimStatus, string> = {
-  analogy: '启发性类比',
-  candidate: '待验证结构候选',
-  verified: '已验证结果',
+  analogy: '启发',
+  candidate: '候选',
+  supported: '有支持',
+  established: '已确立',
+  refuted: '被反驳',
+  verified: '已确立',
 };
 
-export const MODE_LABEL = { discussion: '讨论', rewrite: '改写选段', relation: '关系分析' } as const;
+export const MODE_LABEL = { discussion: '讨论', rewrite: '改写选段', relation: '关系分析', canvas: '画布操作' } as const;
 
 export function formatTime(value: string | number | undefined | null) {
   if (value == null) return '';

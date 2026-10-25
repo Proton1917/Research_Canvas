@@ -3,16 +3,17 @@
 import { MarkdownAdapter, titleMiddleware } from '@editor/shared/adapters';
 import type { Store } from '@editor/document';
 import { MarkdownTransformer } from '@editor/widgets/linked-doc';
+import { Text } from '@editor/document';
 import * as Y from 'yjs';
 
 import { api, ApiError } from '../api/client';
 import type {
-  Canvas, CanvasObject, Content, EditorStateEnvelope, ImportResult, Relation, ResearchDocument, TextBlock,
+  Anchor, Bounds, Canvas, CanvasAction, CanvasObject, Content, EditorStateEnvelope, ProposalEndpoint, FragmentCard, ImportResult, LinkView, Relation, ResearchDocument, TextBlock,
 } from '../api/types';
 import { AssetBlobSource } from './blob-source';
 import { getStoreExtensions } from './extensions';
 import {
-  buildCanvasStore, buildEmptyStore, buildStoreFromBlocks, projectStore, reconcileStore, storeTitle,
+  buildCanvasStore, buildEmptyStore, buildStoreFromBlocks, parseBlockText, projectStore, reconcileStore, storeTitle,
 } from './projection';
 import { ResearchWorkspace } from './workspace';
 
@@ -24,7 +25,14 @@ export type EntryStatus = {
   error?: string;
   conflictVersion?: number;
   savedAt?: number;
+  /** 本地编辑序号：每次编辑递增 */
+  seq?: number;
+  /** 服务端已确认保存的编辑序号 */
+  savedSeq?: number;
 };
+
+/** 保存失败或冲突、需要用户处理的对象。 */
+export type PendingSave = { kind: 'document' | 'canvas'; id: string; title: string; state: SaveState; error?: string };
 
 type DocEntry = {
   id: string;
@@ -35,19 +43,38 @@ type DocEntry = {
   status: EntryStatus;
   timer?: ReturnType<typeof setTimeout>;
   saving?: Promise<void>;
-  again?: boolean;
+  /** 本地编辑序号，每次编辑状态更新时递增 */
+  seq: number;
+  /** 最近一次被服务端确认的快照对应的序号 */
+  savedSeq: number;
   suppress: number;
+  /** 仅有首次打开的格式转换、尚未写回；首次编辑或 flushDocument 时一并保存 */
+  deferred?: boolean;
 };
 
 type CanvasEntry = {
   id: string;
   canvas: Canvas;
   store: Store;
-  links: Map<string, string>;
+  /** 连线标识 → 视图记录 */
+  views: Map<string, LinkView>;
+  /** 本画布隐藏的研究关系 */
+  hidden: Set<string>;
+  /** 片段卡片块标识 → 锚点引用 */
+  fragments: Map<string, FragmentCard>;
+  /** 本次会话中移除的视图；撤销恢复同一连线时重新绑定 */
+  removed: Map<string, LinkView>;
+  /** 本次会话新画出的连线，保存时为两端文稿卡片建立研究关系 */
+  fresh: Set<string>;
+  /** 保存暂停计数：画布事务提交期间不发起自动保存 */
+  held: number;
   status: EntryStatus;
   timer?: ReturnType<typeof setTimeout>;
   saving?: Promise<void>;
-  again?: boolean;
+  /** 本地编辑序号，每次编辑状态更新时递增 */
+  seq: number;
+  /** 最近一次被服务端确认的快照对应的序号 */
+  savedSeq: number;
   suppress: number;
 };
 
@@ -83,15 +110,41 @@ function parseXYWH(value: string): [number, number, number, number] {
   return [0, 0, 0, 0];
 }
 
+type ConnectorLike = { id: string; source: { id?: string }; target: { id?: string } };
+
 type SurfaceLike = {
-  getElementsByType(type: string): Array<{ id: string; source: { id?: string }; target: { id?: string } }>;
+  getElementsByType(type: string): ConnectorLike[];
   addElement(props: Record<string, unknown>): string;
   deleteElement(id: string): void;
   hasElementById(id: string): boolean;
-  elementAdded: { subscribe(fn: () => void): { unsubscribe(): void } };
-  elementRemoved: { subscribe(fn: () => void): { unsubscribe(): void } };
-  elementUpdated: { subscribe(fn: () => void): { unsubscribe(): void } };
 };
+
+/** 画布连线生命周期中需要界面告知用户的结果。 */
+export type LinkEvent =
+  | { type: 'relation-created'; canvasId: string; connectorId: string; relation: Relation }
+  | { type: 'relation-failed'; canvasId: string; connectorId: string; error: string }
+  | { type: 'view-hidden'; canvasId: string; relationId: string }
+  | { type: 'view-detached'; canvasId: string; connectorId: string; relationId: string };
+
+const VIEW_VERSION = 2;
+
+/** 读取画布的视图记录；旧版 links 迁移为绑定视图。 */
+function readViews(envelope: EditorStateEnvelope | null) {
+  const views = new Map<string, LinkView>();
+  const hidden = new Set<string>(envelope?.hidden_relations ?? []);
+  const fragments = new Map<string, FragmentCard>(Object.entries(envelope?.fragments ?? {}));
+  if (envelope?.view_version && envelope.view_version >= VIEW_VERSION) {
+    for (const [id, view] of Object.entries(envelope.link_views ?? {})) views.set(id, { ...view, connector_id: id });
+  } else {
+    for (const [connectorId, relationId] of Object.entries(envelope?.links ?? {})) {
+      views.set(connectorId, {
+        view_id: connectorId, connector_id: connectorId, relation_id: relationId,
+        source_instance: null, target_instance: null, created_at: new Date().toISOString(),
+      });
+    }
+  }
+  return { views, hidden, fragments, migrated: !!envelope && !(envelope.view_version && envelope.view_version >= VIEW_VERSION) };
+}
 
 export class ResearchSession {
   readonly workspace: ResearchWorkspace;
@@ -102,7 +155,11 @@ export class ResearchSession {
   private readonly _canvasLoading = new Map<string, Promise<CanvasEntry>>();
   private readonly _listeners = new Set<() => void>();
   private _relations: Relation[] = [];
+  /** 关系列表来自服务端后才据此清理已删除关系的连线 */
+  private _relationsLoaded = false;
+  private readonly _generations = new Map<string, number>();
   private _version = 0;
+  onLinkEvent?: (event: LinkEvent) => void;
   /** 文稿内容或版本号在会话内更新后通知界面（例如标题修改、保存后版本递增）。 */
   onDocumentSaved?: (doc: ResearchDocument) => void;
   onCanvasSaved?: (canvas: Canvas) => void;
@@ -149,11 +206,12 @@ export class ResearchSession {
 
   setRelations(relations: Relation[]) {
     this._relations = relations;
+    this._relationsLoaded = true;
   }
 
   hasPendingChanges() {
-    for (const entry of this._docs.values()) if (entry.status.state === 'dirty' || entry.status.state === 'saving') return true;
-    for (const entry of this._canvases.values()) if (entry.status.state === 'dirty' || entry.status.state === 'saving') return true;
+    for (const entry of this._docs.values()) if (!entry.readonly && (entry.seq !== entry.savedSeq || entry.saving)) return true;
+    for (const entry of this._canvases.values()) if (entry.seq !== entry.savedSeq || entry.saving) return true;
     return false;
   }
 
@@ -187,7 +245,7 @@ export class ResearchSession {
     const pages = new Map<string, number>();
     for (const block of doc.content.blocks) if (block.page != null) pages.set(block.id, block.page);
     const entry: DocEntry = {
-      id: doc.id, doc, store, pages, readonly, suppress: 1,
+      id: doc.id, doc, store, pages, readonly, suppress: 1, seq: 0, savedSeq: 0,
       status: { state: readonly ? 'readonly' : 'saved', version: doc.current_version },
     };
     let convertAfterLoad: 'markdown' | 'paragraphs' | null = null;
@@ -252,7 +310,9 @@ export class ResearchSession {
     });
     entry.suppress = 0;
     this._docs.set(doc.id, entry);
-    if (convertAfterLoad || upgradeProjection) this._markDocDirty(entry);
+    // AI 画布提案新建的文稿在用户编辑前保持服务端版本，整组撤销据此判断无后续修改
+    if (convertAfterLoad && !upgradeProjection && doc.metadata.canvas_proposal_id) entry.deferred = true;
+    else if (convertAfterLoad || upgradeProjection) this._markDocDirty(entry);
     this._emit();
     return entry;
   }
@@ -291,18 +351,24 @@ export class ResearchSession {
 
   // ---------------------------------------------------------------- 文稿保存
   private _markDocDirty(entry: DocEntry) {
-    if (entry.status.state === 'conflict') return;
-    entry.status = { ...entry.status, state: 'dirty', error: undefined };
+    entry.deferred = false;
+    entry.seq++;
+    // 冲突与保存中状态保留：冲突由用户处理；保存结束时按序号判断是否仍有待保存编辑
+    if (entry.status.state === 'conflict') { this._emit(); return; }
+    if (entry.status.state !== 'saving') entry.status = { ...entry.status, state: 'dirty', error: undefined, seq: entry.seq };
+    else entry.status = { ...entry.status, seq: entry.seq };
     clearTimeout(entry.timer);
     entry.timer = setTimeout(() => void this.saveDocument(entry.id), SAVE_DELAY);
     this._emit();
   }
 
   /** 生成与当前编辑状态一致的内容：文本块、Markdown 与可恢复的编辑器状态。 */
-  async snapshotContent(id: string): Promise<{ title: string; content: Content }> {
+  async snapshotContent(id: string): Promise<{ seq: number; title: string; content: Content }> {
     const entry = this._docs.get(id);
     if (!entry) throw new Error('文稿尚未载入');
     const { store } = entry;
+    // 以下读取在第一个 await 之前同步完成：序号、文本块、标题、编辑器状态和 Markdown 来源快照属于同一次编辑状态。
+    const seq = entry.seq;
     const blocks = projectStore(store, entry.pages);
     const title = storeTitle(store).trim() || entry.doc.title;
     const update = Y.encodeStateAsUpdate(this.workspace.getResearchDoc(id)!.spaceDoc);
@@ -325,7 +391,7 @@ export class ResearchSession {
     }
     const envelope: EditorStateEnvelope = { format: 'blocksuite-yjs-v1', update: toBase64(update) };
     if (Object.keys(assets).length) envelope.assets = assets;
-    return { title, content: { blocks, markdown, editor_state: envelope } };
+    return { seq, title, content: { blocks, markdown, editor_state: envelope } };
   }
 
   async saveDocument(id: string, options: { overwriteVersion?: number } = {}): Promise<void> {
@@ -333,21 +399,27 @@ export class ResearchSession {
     if (!entry || entry.readonly) return;
     clearTimeout(entry.timer);
     if (entry.saving) {
-      entry.again = true;
-      return entry.saving;
+      // 进行中的请求只覆盖其快照序号；结束后若序号已前进会继续保存
+      await entry.saving;
+      if (options.overwriteVersion === undefined) return;
     }
-    if (entry.status.state === 'saved' && options.overwriteVersion === undefined) return;
-    if (entry.status.state === 'conflict' && options.overwriteVersion === undefined) return;
+    if (options.overwriteVersion === undefined) {
+      if (entry.seq === entry.savedSeq && entry.status.state !== 'error') return;
+      if (entry.status.state === 'conflict') return;
+    }
     entry.status = { ...entry.status, state: 'saving' };
     this._emit();
     entry.saving = (async () => {
+      let retry = false;
       try {
-        const { title, content } = await this.snapshotContent(id);
+        const { seq, title, content } = await this.snapshotContent(id);
         const expected = options.overwriteVersion ?? entry.status.version;
         const saved = await api.updateDocument(id, { expected_version: expected, title, content });
         entry.doc = saved;
+        entry.savedSeq = Math.max(entry.savedSeq, seq);
         this.workspace.meta.setDocMeta(id, { title: saved.title });
-        entry.status = { state: entry.again ? 'dirty' : 'saved', version: saved.current_version, savedAt: Date.now() };
+        retry = entry.seq > entry.savedSeq;
+        entry.status = { state: retry ? 'dirty' : 'saved', version: saved.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
         this.onDocumentSaved?.(saved);
       } catch (error) {
         if (error instanceof ApiError && error.isConflict) {
@@ -359,11 +431,8 @@ export class ResearchSession {
         entry.saving = undefined;
         this._emit();
       }
-      if (entry.again && entry.status.state === 'dirty') {
-        entry.again = false;
-        await this.saveDocument(id);
-      }
-      entry.again = false;
+      // 保存期间产生的编辑进入下一次保存
+      if (retry) await this.saveDocument(id);
     })();
     return entry.saving;
   }
@@ -372,18 +441,38 @@ export class ResearchSession {
   async flushDocument(id: string): Promise<number> {
     const entry = this._docs.get(id);
     if (!entry) throw new Error('文稿尚未载入');
-    if (entry.status.state === 'dirty' || entry.status.state === 'error') await this.saveDocument(id);
-    else if (entry.saving) await entry.saving;
+    if (entry.saving) await entry.saving;
+    if (entry.deferred) { entry.deferred = false; entry.seq++; }
+    if (!entry.readonly && (entry.seq !== entry.savedSeq || entry.status.state === 'error')) await this.saveDocument(id);
     if (entry.status.state === 'conflict') throw new Error('文稿存在版本冲突，请先处理冲突');
     if (entry.status.state === 'error') throw new Error(entry.status.error ?? '文稿保存失败');
     return entry.status.version;
   }
 
-  async flushAll() {
+  /** 等待画布的修改写入后端。冲突、失败或正在提交画布事务时抛出。 */
+  async flushCanvas(id: string): Promise<number> {
+    const entry = this._canvases.get(id);
+    if (!entry) throw new Error('画布尚未载入');
+    if (entry.saving) await entry.saving;
+    if (entry.held === 0 && (entry.seq !== entry.savedSeq || entry.status.state === 'error')) await this.saveCanvas(id);
+    if (entry.status.state === 'conflict') throw new Error('画布存在版本冲突，请先处理冲突');
+    if (entry.status.state === 'error') throw new Error(entry.status.error ?? '画布保存失败');
+    if (entry.seq !== entry.savedSeq) throw new Error('画布仍有未保存的修改');
+    return entry.status.version;
+  }
+
+  /** 写入全部待保存内容，返回仍未保存的对象（冲突、失败或画布事务进行中）。 */
+  async flushAll(): Promise<PendingSave[]> {
+    const pending: PendingSave[] = [];
+    const record = (kind: PendingSave['kind'], id: string, title: string, state: SaveState, error: unknown) =>
+      pending.push({ kind, id, title, state, error: error instanceof Error ? error.message : String(error) });
     await Promise.all([
-      ...Array.from(this._docs.keys()).map(id => this.flushDocument(id).catch(() => undefined)),
-      ...Array.from(this._canvases.keys()).map(id => this.saveCanvas(id).catch(() => undefined)),
+      ...Array.from(this._docs.values()).filter(entry => !entry.readonly).map(entry =>
+        this.flushDocument(entry.id).catch(error => record('document', entry.id, storeTitle(entry.store) || entry.doc.title, entry.status.state, error))),
+      ...Array.from(this._canvases.values()).map(entry =>
+        this.flushCanvas(entry.id).catch(error => record('canvas', entry.id, entry.canvas.name, entry.status.state, error))),
     ]);
+    return pending;
   }
 
   /** 冲突处理：以本地内容覆盖为新版本。 */
@@ -421,7 +510,8 @@ export class ResearchSession {
       entry.suppress--;
     }
     this.workspace.meta.setDocMeta(doc.id, { title: doc.title });
-    entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now() };
+    entry.savedSeq = entry.seq;
+    entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
     this._emit();
   }
 
@@ -455,8 +545,9 @@ export class ResearchSession {
     const bsDoc = this.workspace.createDoc(canvas.id);
     this.workspace.meta.setDocMeta(canvas.id, { title: canvas.name });
     const store = bsDoc.getStore({ id: canvas.id });
+    const { views, hidden, fragments, migrated } = readViews(envelope);
     const entry: CanvasEntry = {
-      id: canvas.id, canvas, store, links: new Map(Object.entries(envelope?.links ?? {})), suppress: 1,
+      id: canvas.id, canvas, store, views, hidden, fragments, removed: new Map(), fresh: new Set(), held: 0, suppress: 1, seq: 0, savedSeq: 0,
       status: { state: 'saved', version: canvas.revision },
     };
     if (envelope) {
@@ -474,21 +565,62 @@ export class ResearchSession {
     }
     store.resetHistory();
     this._canvases.set(canvas.id, entry);
+    // 载入时已有的连线都登记为视图：旧版缺少连线的绑定转为隐藏，未绑定的连线保持纯视觉，不触发建立关系。
+    const viewsChanged = this._reconcileViews(entry, true);
     bsDoc.spaceDoc.on('update', () => {
       if (entry.suppress > 0) return;
       this._markCanvasDirty(entry);
     });
     entry.suppress = 0;
+    if (migrated && viewsChanged) this._markCanvasDirty(entry);
     this._emit();
     return entry;
   }
 
   private _markCanvasDirty(entry: CanvasEntry) {
-    if (entry.status.state === 'conflict') return;
-    entry.status = { ...entry.status, state: 'dirty', error: undefined };
+    entry.seq++;
+    if (entry.status.state === 'conflict') { this._emit(); return; }
+    if (entry.status.state !== 'saving') entry.status = { ...entry.status, state: 'dirty', error: undefined, seq: entry.seq };
+    else entry.status = { ...entry.status, seq: entry.seq };
     clearTimeout(entry.timer);
-    entry.timer = setTimeout(() => void this.saveCanvas(entry.id), SAVE_DELAY);
+    if (entry.held === 0) entry.timer = setTimeout(() => void this.saveCanvas(entry.id), SAVE_DELAY);
     this._emit();
+  }
+
+  /**
+   * 暂停画布自动保存，先写入已有修改并等待进行中的保存，返回当前 revision。
+   * 用于服务端画布事务：调用方完成事务后以 releaseCanvas 恢复保存。
+   */
+  async holdCanvas(id: string): Promise<number> {
+    const entry = this._canvases.get(id);
+    if (!entry) throw new Error('画布尚未载入');
+    if (entry.status.state === 'dirty' || entry.status.state === 'error') await this.saveCanvas(id);
+    else if (entry.saving) await entry.saving;
+    if (entry.status.state === 'conflict') throw new Error('画布存在版本冲突，请先处理冲突');
+    if (entry.status.state === 'error') throw new Error(entry.status.error ?? '画布保存失败');
+    entry.held++;
+    clearTimeout(entry.timer);
+    // 事务提交期间画布只读，服务端结果不会与未保存的本地编辑交错
+    entry.store.readonly = true;
+    this._emit();
+    return entry.status.version;
+  }
+
+  /** 恢复自动保存；事务期间产生的本地修改随后写入。 */
+  releaseCanvas(id: string) {
+    const entry = this._canvases.get(id);
+    if (!entry) return;
+    entry.held = Math.max(0, entry.held - 1);
+    if (entry.held === 0) entry.store.readonly = false;
+    this._emit();
+    if (entry.held === 0 && entry.status.state === 'dirty') {
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(() => void this.saveCanvas(entry.id), SAVE_DELAY);
+    }
+  }
+
+  isCanvasHeld(id: string) {
+    return (this._canvases.get(id)?.held ?? 0) > 0;
   }
 
   private _surface(store: Store): SurfaceLike | null {
@@ -527,98 +659,365 @@ export class ResearchSession {
     return id;
   }
 
-  /** 画布连线 → 工作区关系：两端都是文稿卡片的连线保存为关系；关系补齐为连线。 */
-  async reconcileCanvasLinks(canvasId: string) {
-    const entry = this._canvases.get(canvasId);
-    if (!entry) return;
+  // ------------------------------------------------------------ 连线视图与研究关系
+  //
+  // 视觉连线（编辑器 connector）、连线视图记录（LinkView）与研究关系（Relation）各自独立：
+  // - 删除画布连线只移除该视图；两端仍在时记入本画布的隐藏关系，研究关系保留。
+  // - 改接连线解除视图与原关系的绑定，原关系记为隐藏，新端点保持纯视觉。
+  // - 删除卡片带走的连线只移除视图，关系回到“尚未放置”状态。
+  // - 显式删除研究关系后，同步移除绑定它的连线视图。
+  // - 新画出的、两端为不同文稿卡片的连线保存时建立研究关系（快捷操作，结果通过 onLinkEvent 告知）。
+
+  private _instances(entry: CanvasEntry) {
+    const ids = new Set<string>();
+    for (const model of entry.store.getModelsByFlavour([SYNCED_DOC, 'affine:note', 'affine:frame', 'affine:edgeless-text', 'affine:image'])) ids.add(model.id);
+    return ids;
+  }
+
+  /** 本地视图簿记：登记新连线、记录删除与改接。返回视图状态是否变化。 */
+  private _reconcileViews(entry: CanvasEntry, initial = false) {
     const surface = this._surface(entry.store);
-    if (!surface) return;
-    const cardDoc = new Map(entry.store.getModelsByFlavour(SYNCED_DOC).map(model => [model.id, (model.props as unknown as { pageId: string }).pageId]));
-    const relationById = new Map(this._relations.map(relation => [relation.id, relation]));
-    let changed = false;
+    if (!surface) return false;
     const connectors = surface.getElementsByType('connector');
-    const present = new Set(connectors.map(connector => connector.id));
-    for (const [connectorId, relationId] of Array.from(entry.links)) {
+    const present = new Map(connectors.map(connector => [connector.id, connector]));
+    const instances = this._instances(entry);
+    const exists = (id: string | null) => !!id && (instances.has(id) || surface.hasElementById(id));
+    let changed = false;
+    for (const [connectorId, view] of Array.from(entry.views)) {
       if (present.has(connectorId)) continue;
-      entry.links.delete(connectorId);
-      if (relationById.has(relationId)) {
-        await api.deleteRelation(relationId).catch(() => undefined);
-        this._relations = this._relations.filter(relation => relation.id !== relationId);
-        changed = true;
+      entry.views.delete(connectorId);
+      entry.fresh.delete(connectorId);
+      entry.removed.set(connectorId, view);
+      changed = true;
+      if (!view.relation_id) continue;
+      // 迁移的旧绑定没有端点记录；两端都在或无法判断时视为用户隐藏
+      const endpointsKnown = view.source_instance !== null || view.target_instance !== null;
+      if (!endpointsKnown || (exists(view.source_instance) && exists(view.target_instance))) {
+        entry.hidden.add(view.relation_id);
+        if (!initial) this.onLinkEvent?.({ type: 'view-hidden', canvasId: entry.id, relationId: view.relation_id });
       }
     }
     for (const connector of connectors) {
-      const sourceDoc = connector.source.id ? cardDoc.get(connector.source.id) : undefined;
-      const targetDoc = connector.target.id ? cardDoc.get(connector.target.id) : undefined;
-      const linked = entry.links.get(connector.id);
-      const relation = linked ? relationById.get(linked) : undefined;
-      if (!sourceDoc || !targetDoc || sourceDoc === targetDoc) continue;
-      if (relation && relation.source_id === sourceDoc && relation.target_id === targetDoc) continue;
-      if (relation) {
-        await api.deleteRelation(relation.id).catch(() => undefined);
-        this._relations = this._relations.filter(item => item.id !== relation.id);
+      const source = connector.source.id ?? null;
+      const target = connector.target.id ?? null;
+      let view = entry.views.get(connector.id);
+      if (!view) {
+        const restored = entry.removed.get(connector.id);
+        if (restored) {
+          // 撤销删除：恢复原视图与绑定
+          entry.removed.delete(connector.id);
+          view = restored;
+          if (view.relation_id) entry.hidden.delete(view.relation_id);
+        } else {
+          view = { view_id: connector.id, connector_id: connector.id, relation_id: null, source_instance: source, target_instance: target, created_at: new Date().toISOString() };
+          if (!initial) entry.fresh.add(connector.id);
+        }
+        entry.views.set(connector.id, view);
+        changed = true;
       }
+      if (view.source_instance === null && view.target_instance === null && view.relation_id && initial) {
+        // 旧版绑定补记端点
+        entry.views.set(connector.id, { ...view, source_instance: source, target_instance: target });
+        changed = true;
+        continue;
+      }
+      if (view.source_instance !== source || view.target_instance !== target) {
+        const next: LinkView = { ...view, source_instance: source, target_instance: target };
+        if (view.relation_id && !entry.fresh.has(connector.id)) {
+          entry.hidden.add(view.relation_id);
+          next.detached_from = view.relation_id;
+          next.relation_id = null;
+          this.onLinkEvent?.({ type: 'view-detached', canvasId: entry.id, connectorId: connector.id, relationId: view.relation_id });
+        }
+        entry.views.set(connector.id, next);
+        changed = true;
+      }
+    }
+    for (const id of Array.from(entry.fragments.keys())) {
+      if (!entry.store.getModelById(id)) { entry.fragments.delete(id); changed = true; }
+    }
+    return changed;
+  }
+
+  private _cardDocuments(entry: CanvasEntry) {
+    return new Map(entry.store.getModelsByFlavour(SYNCED_DOC).map(model => [model.id, (model.props as unknown as { pageId: string }).pageId]));
+  }
+
+  /** 为新画出的文稿卡片连线建立研究关系。失败时连线保持纯视觉并报告原因。 */
+  async reconcileCanvasLinks(canvasId: string) {
+    const entry = this._canvases.get(canvasId);
+    if (!entry) return;
+    this._reconcileViews(entry);
+    const cardDoc = this._cardDocuments(entry);
+    let changed = false;
+    for (const connectorId of Array.from(entry.fresh)) {
+      entry.fresh.delete(connectorId);
+      const view = entry.views.get(connectorId);
+      if (!view || view.relation_id) continue;
+      const sourceDoc = view.source_instance ? cardDoc.get(view.source_instance) : undefined;
+      const targetDoc = view.target_instance ? cardDoc.get(view.target_instance) : undefined;
+      if (!sourceDoc || !targetDoc || sourceDoc === targetDoc) continue;
       try {
         const created = await api.createRelation(this.workspaceId, { source_id: sourceDoc, target_id: targetDoc, kind: '关联', label: '' });
-        this._relations.push(created);
-        entry.links.set(connector.id, created.id);
-      } catch {
-        entry.links.delete(connector.id);
+        this._relations = [...this._relations, created];
+        const current = entry.views.get(connectorId);
+        if (current) entry.views.set(connectorId, { ...current, relation_id: created.id });
+        changed = true;
+        this.onLinkEvent?.({ type: 'relation-created', canvasId, connectorId, relation: created });
+      } catch (error) {
+        this.onLinkEvent?.({ type: 'relation-failed', canvasId, connectorId, error: error instanceof Error ? error.message : String(error) });
       }
-      changed = true;
     }
     if (changed) this.onRelationsChanged?.();
   }
 
-  /** 为画布上两端文稿都存在、但尚无连线的关系补齐连线；删除已失效关系的连线。 */
+  /**
+   * 关系 → 连线：为两端都在画布、未隐藏且尚无视图的研究关系补齐连线；
+   * 移除绑定已删除关系的连线。先完成本地视图簿记，缺失的连线不会被重新生成。
+   */
   syncCanvasRelations(canvasId: string, persist = true) {
     const entry = this._canvases.get(canvasId);
     if (!entry || entry.store.readonly) return;
     const surface = this._surface(entry.store);
     if (!surface) return;
-    const cards = entry.store.getModelsByFlavour(SYNCED_DOC);
+    let changed = this._reconcileViews(entry);
     const cardByDoc = new Map<string, string>();
-    for (const card of cards) {
-      const pageId = (card.props as unknown as { pageId: string }).pageId;
-      if (!cardByDoc.has(pageId)) cardByDoc.set(pageId, card.id);
-    }
+    for (const [cardId, pageId] of this._cardDocuments(entry)) if (!cardByDoc.has(pageId)) cardByDoc.set(pageId, cardId);
     const relationIds = new Set(this._relations.map(relation => relation.id));
     entry.suppress++;
-    let changed = false;
     try {
-      for (const [connectorId, relationId] of Array.from(entry.links)) {
-        if (relationIds.has(relationId) && surface.hasElementById(connectorId)) continue;
-        entry.links.delete(connectorId);
-        if (surface.hasElementById(connectorId)) surface.deleteElement(connectorId);
-        changed = true;
+      if (this._relationsLoaded) {
+        for (const [connectorId, view] of Array.from(entry.views)) {
+          if (!view.relation_id || relationIds.has(view.relation_id)) continue;
+          entry.views.delete(connectorId);
+          if (surface.hasElementById(connectorId)) surface.deleteElement(connectorId);
+          changed = true;
+        }
+        for (const id of Array.from(entry.hidden)) if (!relationIds.has(id)) { entry.hidden.delete(id); changed = true; }
       }
+      const bound = new Set(Array.from(entry.views.values()).map(view => view.relation_id).filter((id): id is string => !!id));
       for (const relation of this._relations) {
-        if (Array.from(entry.links.values()).includes(relation.id)) continue;
+        if (bound.has(relation.id) || entry.hidden.has(relation.id)) continue;
         const source = cardByDoc.get(relation.source_id);
         const target = cardByDoc.get(relation.target_id);
         if (!source || !target) continue;
-        const context = relation.kind === 'context';
-        const connectorId = surface.addElement({
-          type: 'connector',
-          mode: 2,
-          source: { id: source },
-          target: { id: target },
-          stroke: context ? '#929292' : '#d97757',
-          strokeStyle: context ? 'dash' : 'solid',
-          strokeWidth: context ? 2 : 3,
+        const connectorId = this._addConnector(surface, source, target, relation.kind === 'context');
+        entry.views.set(connectorId, {
+          view_id: connectorId, connector_id: connectorId, relation_id: relation.id,
+          source_instance: source, target_instance: target, created_at: new Date().toISOString(),
         });
-        entry.links.set(connectorId, relation.id);
         changed = true;
       }
     } finally {
       entry.suppress--;
     }
-    // 载入时补齐的连线只用于显示；用户操作引起的关系变化才写入画布布局。
+    // 载入时补齐的连线只用于显示；用户操作引起的视图变化才写入画布布局。
     if (changed && persist) this._markCanvasDirty(entry);
   }
 
+  private _addConnector(surface: SurfaceLike, source: string, target: string, context: boolean) {
+    return surface.addElement({
+      type: 'connector',
+      mode: 2,
+      source: { id: source },
+      target: { id: target },
+      stroke: context ? '#929292' : '#d97757',
+      strokeStyle: context ? 'dash' : 'solid',
+      strokeWidth: context ? 2 : 3,
+    });
+  }
+
   relationForConnector(canvasId: string, connectorId: string) {
-    return this._canvases.get(canvasId)?.links.get(connectorId) ?? null;
+    return this._canvases.get(canvasId)?.views.get(connectorId)?.relation_id ?? null;
+  }
+
+  linkView(canvasId: string, connectorId: string): LinkView | null {
+    return this._canvases.get(canvasId)?.views.get(connectorId) ?? null;
+  }
+
+  linkViews(canvasId: string): LinkView[] {
+    return Array.from(this._canvases.get(canvasId)?.views.values() ?? []);
+  }
+
+  hiddenRelations(canvasId: string): string[] {
+    return Array.from(this._canvases.get(canvasId)?.hidden ?? []);
+  }
+
+  /** 关系在已载入画布中的显示情况，用于关系面板说明。 */
+  relationPlacement(relationId: string) {
+    const result: Array<{ canvasId: string; views: number; hidden: boolean }> = [];
+    for (const entry of this._canvases.values()) {
+      const views = Array.from(entry.views.values()).filter(view => view.relation_id === relationId).length;
+      if (views > 0 || entry.hidden.has(relationId)) result.push({ canvasId: entry.id, views, hidden: entry.hidden.has(relationId) });
+    }
+    return result;
+  }
+
+  /** 用户显式恢复隐藏关系在本画布的显示。两端卡片不在画布时保持未放置。 */
+  showRelation(canvasId: string, relationId: string) {
+    const entry = this._canvases.get(canvasId);
+    if (!entry) return;
+    entry.hidden.delete(relationId);
+    this._markCanvasDirty(entry);
+    this.syncCanvasRelations(canvasId);
+  }
+
+  /** 从画布隐藏关系的全部视图，研究关系保留。 */
+  hideRelation(canvasId: string, relationId: string) {
+    const entry = this._canvases.get(canvasId);
+    const surface = entry ? this._surface(entry.store) : null;
+    if (!entry || !surface) return;
+    entry.hidden.add(relationId);
+    for (const [connectorId, view] of Array.from(entry.views)) {
+      if (view.relation_id !== relationId) continue;
+      entry.views.delete(connectorId);
+      if (surface.hasElementById(connectorId)) surface.deleteElement(connectorId);
+    }
+    this._markCanvasDirty(entry);
+  }
+
+  /** 将一条已解除绑定或纯视觉的连线绑定到研究关系（新建或已有）。 */
+  bindConnector(canvasId: string, connectorId: string, relationId: string) {
+    const entry = this._canvases.get(canvasId);
+    const view = entry?.views.get(connectorId);
+    if (!entry || !view) return;
+    entry.views.set(connectorId, { ...view, relation_id: relationId });
+    entry.hidden.delete(relationId);
+    this._markCanvasDirty(entry);
+  }
+
+  /** 连线两端对应的文稿（仅文稿卡片端点）。 */
+  connectorDocuments(canvasId: string, connectorId: string): [string | null, string | null] {
+    const entry = this._canvases.get(canvasId);
+    const view = entry?.views.get(connectorId);
+    if (!entry || !view) return [null, null];
+    const cards = this._cardDocuments(entry);
+    return [view.source_instance ? cards.get(view.source_instance) ?? null : null, view.target_instance ? cards.get(view.target_instance) ?? null : null];
+  }
+
+  /**
+   * 来源连接：从提问时所选的对象连到生成的讨论框。属于纯视觉连线（不建立研究关系），
+   * 删除时只影响本画布。已有同端点连线时不重复添加。
+   */
+  addSourceLinks(canvasId: string, sourceIds: string[], targetId: string) {
+    const entry = this._canvases.get(canvasId);
+    const surface = entry ? this._surface(entry.store) : null;
+    if (!entry || !surface || entry.store.readonly) return [];
+    const existing = new Set(Array.from(entry.views.values()).map(view => `${view.source_instance}>${view.target_instance}`));
+    const created: string[] = [];
+    for (const source of sourceIds) {
+      if (source === targetId || existing.has(`${source}>${targetId}`)) continue;
+      if (!entry.store.getModelById(source) && !surface.hasElementById(source)) continue;
+      const connectorId = surface.addElement({ type: 'connector', mode: 2, source: { id: source }, target: { id: targetId }, stroke: '#8e6cdf', strokeStyle: 'solid', strokeWidth: 2 });
+      // 先登记视图，避免保存时被当作新画出的文稿连线而自动建立研究关系
+      entry.views.set(connectorId, { view_id: connectorId, connector_id: connectorId, relation_id: null, source_instance: source, target_instance: targetId, created_at: new Date().toISOString() });
+      created.push(connectorId);
+    }
+    if (created.length) this._markCanvasDirty(entry);
+    return created;
+  }
+
+  // ------------------------------------------------------------ 画布提案物化
+  /**
+   * 在隔离的编辑副本中按提案操作生成应用后的完整 editor_state。
+   * 副本从当前画布 Yjs 状态复制，新建文稿实例使用 id_map 中预分配的标识，
+   * 新研究关系按 id_map 生成连线并写入 link_views；当前画布本身不被修改。
+   */
+  materializeProposal(canvasId: string, actions: CanvasAction[], idMap: Record<string, string>): { envelope: EditorStateEnvelope; unplaced: string[] } {
+    const entry = this._canvases.get(canvasId);
+    const source = this.workspace.getResearchDoc(canvasId);
+    if (!entry || !source) throw new Error('画布尚未载入');
+    const tempId = `${canvasId}:proposal:${crypto.randomUUID()}`;
+    const bsDoc = this.workspace.createDoc(tempId);
+    try {
+      Y.applyUpdate(bsDoc.spaceDoc, Y.encodeStateAsUpdate(source.spaceDoc));
+      bsDoc.load();
+      const store = bsDoc.getStore({ id: tempId });
+      const surfaceModel = store.getModelsByFlavour('affine:surface')[0];
+      const surface = surfaceModel as unknown as (SurfaceLike & { updateElement(id: string, props: Record<string, unknown>): void }) | undefined;
+      if (!surfaceModel || !surface) throw new Error('画布缺少绘制表面');
+      const views = new Map(entry.views);
+      const fragments = new Map(entry.fragments);
+      const unplaced: string[] = [];
+      const xywh = (bounds: Bounds) => `[${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)}]`;
+      for (const action of actions) {
+        if (action.type === 'create_document') {
+          store.addBlock(SYNCED_DOC, { id: idMap[`${action.key}:object`], pageId: idMap[action.key], xywh: xywh(action.bounds) } as never, surfaceModel.id);
+        } else if (action.type === 'move_object') {
+          const block = store.getModelById(action.object_id);
+          if (block) store.updateBlock(block, { xywh: xywh(action.bounds) } as never);
+          else if (surface.hasElementById(action.object_id)) surface.updateElement(action.object_id, { xywh: xywh(action.bounds) });
+        }
+      }
+      // 研究关系端点：新建文稿取其实例；已有文稿优先取文稿卡片，其次取该文稿的片段卡片
+      const instanceFor = (endpoint: ProposalEndpoint) => {
+        if (endpoint.type === 'created') return idMap[`${endpoint.key}:object`] ?? null;
+        const card = store.getModelsByFlavour(SYNCED_DOC).find(model => (model.props as unknown as { pageId: string }).pageId === endpoint.id);
+        if (card) return card.id;
+        return Array.from(fragments).find(([id, fragment]) => fragment.document_id === endpoint.id && store.getModelById(id))?.[0] ?? null;
+      };
+      for (const action of actions) {
+        if (action.type !== 'create_relation') continue;
+        const sourceInstance = instanceFor(action.source);
+        const targetInstance = instanceFor(action.target);
+        if (!sourceInstance || !targetInstance) { unplaced.push(action.key); continue; }
+        const connectorId = surface.addElement({ type: 'connector', mode: 2, source: { id: sourceInstance }, target: { id: targetInstance }, stroke: '#d97757', strokeStyle: 'dash', strokeWidth: 3 });
+        views.set(connectorId, { view_id: connectorId, connector_id: connectorId, relation_id: idMap[action.key], source_instance: sourceInstance, target_instance: targetInstance, created_at: new Date().toISOString() });
+      }
+      const bound = Array.from(views.values()).filter(view => view.relation_id);
+      const envelope: EditorStateEnvelope = {
+        format: 'blocksuite-yjs-v1',
+        update: toBase64(Y.encodeStateAsUpdate(bsDoc.spaceDoc)),
+        view_version: VIEW_VERSION,
+        link_views: Object.fromEntries(views),
+        hidden_relations: Array.from(entry.hidden),
+        fragments: Object.fromEntries(fragments),
+        links: Object.fromEntries(bound.map(view => [view.connector_id, view.relation_id!])),
+      };
+      const assets = readEnvelope(entry.canvas.editor_state)?.assets;
+      if (assets) envelope.assets = assets;
+      return { envelope, unplaced };
+    } finally {
+      this.workspace.removeDoc(tempId);
+    }
+  }
+
+  // ------------------------------------------------------------ 片段卡片
+  fragmentCards(canvasId: string): Array<[string, FragmentCard]> {
+    return Array.from(this._canvases.get(canvasId)?.fragments ?? []);
+  }
+
+  fragmentFor(canvasId: string, blockId: string): FragmentCard | null {
+    return this._canvases.get(canvasId)?.fragments.get(blockId) ?? null;
+  }
+
+  /** 把锚点作为片段卡片放到画布：卡片显示引用版本的原文，内容身份由锚点保存。 */
+  addFragmentToCanvas(canvasId: string, anchor: Anchor, title: string, position: { x: number; y: number }, width = 420) {
+    const entry = this._canvases.get(canvasId);
+    if (!entry) throw new Error('画布尚未载入');
+    const root = entry.store.root;
+    if (!root) throw new Error('画布缺少根节点');
+    const lines = anchor.quote.split(/\n{2,}/).filter(line => line.trim());
+    const height = Math.min(520, 96 + lines.join('\n').length * 0.9);
+    let noteId = '';
+    entry.store.transact(() => {
+      noteId = entry.store.addBlock('affine:note', {
+        xywh: `[${Math.round(position.x)},${Math.round(position.y)},${width},${Math.round(height)}]`,
+        displayMode: 'edgeless',
+        background: { light: '#fbf4ee', dark: '#3a2a22' },
+      } as never, root.id);
+      for (const line of lines) {
+        const parsed = parseBlockText(line, true);
+        if (parsed.flavour === 'affine:latex') entry.store.addBlock('affine:latex', { latex: parsed.props.latex } as never, noteId);
+        else if (parsed.flavour === 'affine:table') entry.store.addBlock('affine:paragraph', { type: 'quote', text: new Text(line) } as never, noteId);
+        else entry.store.addBlock('affine:paragraph', { type: 'quote', text: new Text(parsed.delta ?? []) } as never, noteId);
+      }
+      const page = anchor.page != null ? ` · 第 ${anchor.page} 页` : '';
+      entry.store.addBlock('affine:paragraph', { type: 'text', text: new Text(`— ${title} · 版本 ${anchor.version}${page}`) } as never, noteId);
+    });
+    entry.fragments.set(noteId, { anchor_id: anchor.id, document_id: anchor.document_id, version: anchor.version });
+    this._markCanvasDirty(entry);
+    return noteId;
   }
 
   async saveCanvas(id: string, options: { overwriteRevision?: number } = {}): Promise<void> {
@@ -626,26 +1025,44 @@ export class ResearchSession {
     if (!entry) return;
     clearTimeout(entry.timer);
     if (entry.saving) {
-      entry.again = true;
-      return entry.saving;
+      await entry.saving;
+      if (options.overwriteRevision === undefined) return;
     }
-    if (entry.status.state === 'saved' && options.overwriteRevision === undefined) return;
-    if (entry.status.state === 'conflict' && options.overwriteRevision === undefined) return;
+    if (options.overwriteRevision === undefined) {
+      if (entry.seq === entry.savedSeq && entry.status.state !== 'error') return;
+      if (entry.status.state === 'conflict' || entry.held > 0) return;
+    }
     entry.status = { ...entry.status, state: 'saving' };
     this._emit();
     entry.saving = (async () => {
+      let retry = false;
       try {
         await this.reconcileCanvasLinks(id);
+        // 序号、编辑器状态、卡片布局与视图记录在同一个同步段内读取
+        const seq = entry.seq;
         const update = Y.encodeStateAsUpdate(this.workspace.getResearchDoc(id)!.spaceDoc);
-        const envelope: EditorStateEnvelope = { format: 'blocksuite-yjs-v1', update: toBase64(update), links: Object.fromEntries(entry.links) };
+        const bound = Array.from(entry.views.values()).filter(view => view.relation_id);
+        const envelope: EditorStateEnvelope = {
+          format: 'blocksuite-yjs-v1',
+          update: toBase64(update),
+          view_version: VIEW_VERSION,
+          link_views: Object.fromEntries(entry.views),
+          hidden_relations: Array.from(entry.hidden),
+          fragments: Object.fromEntries(entry.fragments),
+          // 保留旧字段，供只读取绑定关系的旧版界面使用
+          links: Object.fromEntries(bound.map(view => [view.connector_id, view.relation_id!])),
+        };
+        const objects = this.canvasObjects(id);
         const saved = await api.updateCanvas(id, {
           expected_revision: options.overwriteRevision ?? entry.status.version,
           name: entry.canvas.name,
-          objects: this.canvasObjects(id),
+          objects,
           editor_state: envelope,
         });
         entry.canvas = saved;
-        entry.status = { state: entry.again ? 'dirty' : 'saved', version: saved.revision, savedAt: Date.now() };
+        entry.savedSeq = Math.max(entry.savedSeq, seq);
+        retry = entry.seq > entry.savedSeq;
+        entry.status = { state: retry ? 'dirty' : 'saved', version: saved.revision, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
         this.onCanvasSaved?.(saved);
       } catch (error) {
         if (error instanceof ApiError && error.isConflict) {
@@ -657,11 +1074,7 @@ export class ResearchSession {
         entry.saving = undefined;
         this._emit();
       }
-      if (entry.again && entry.status.state === 'dirty') {
-        entry.again = false;
-        await this.saveCanvas(id);
-      }
-      entry.again = false;
+      if (retry && entry.held === 0) await this.saveCanvas(id);
     })();
     return entry.saving;
   }
@@ -685,14 +1098,33 @@ export class ResearchSession {
   /** 冲突处理：丢弃本地布局并按服务端画布重新载入。 */
   async reloadCanvas(id: string, documents: Map<string, ResearchDocument>) {
     const current = await api.getCanvas(id);
-    const entry = this._canvases.get(id);
+    await this.adoptServerCanvas(current, documents);
+    return current;
+  }
+
+  /**
+   * 采用服务端画布的完整状态（冲突时载入服务器版本，或画布事务返回新 revision 后）。
+   * 编辑器以新的存储重建，界面通过 canvasGeneration 感知并重新挂载。
+   */
+  async adoptServerCanvas(canvas: Canvas, documents: Map<string, ResearchDocument>) {
+    const entry = this._canvases.get(canvas.id);
+    const held = entry?.held ?? 0;
     if (entry) {
       clearTimeout(entry.timer);
-      this._canvases.delete(id);
-      this.workspace.removeDoc(id);
+      this._canvases.delete(canvas.id);
+      this.workspace.removeDoc(canvas.id);
     }
-    await this.ensureCanvas(current, documents);
-    return current;
+    const loaded = await this.ensureCanvas(canvas, documents);
+    loaded.held = held;
+    if (held > 0) loaded.store.readonly = true;
+    this._generations.set(canvas.id, (this._generations.get(canvas.id) ?? 0) + 1);
+    this.syncCanvasRelations(canvas.id, false);
+    this.onCanvasSaved?.(canvas);
+    this._emit();
+  }
+
+  canvasGeneration(id: string) {
+    return this._generations.get(id) ?? 0;
   }
 }
 

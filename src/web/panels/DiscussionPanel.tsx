@@ -4,9 +4,10 @@ import { Button, QuietDotsWave, SegmentedControl, StreamingCursor, useScrollPinn
 import { useEffect, useMemo, useRef } from 'react';
 
 import {
-  app, branchFrom, cancelRun, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
-  sendComposer, setDialogs, setModel, togglePicked, updateComposer, useApp,
+  app, branchFrom, cancelRun, documentMap, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
+  sendComposer, setDialogs, setInheritMode, setModel, togglePicked, updateComposer, useApp,
 } from '../app/model';
+import { inheritedSources } from '../app/materials';
 import { AnchorStatusChip, Chip, EmptyState, KindIcon, SectionTitle } from '../components/common';
 import { Markdown } from '../components/Markdown';
 import { formatTime, formatUsage, MODE_LABEL, RUN_STATUS_LABEL } from '../lib/format';
@@ -21,7 +22,60 @@ const PLACEHOLDER: Record<ResearchMode, string> = {
   discussion: '提出要讨论的问题，例如：这个推论依赖哪些假设？',
   rewrite: '说明改写要求，例如：把这段论证改写得更严谨，保留公式',
   relation: '说明要分析的关系，例如：这两个概念的对应是否成立？',
+  canvas: '说明希望 AI 在画布上创建或整理的内容',
 };
+
+/** 继续或合并讨论时继承的冻结材料：按完整引用列出，并标注来自哪个分支。 */
+function InheritedMaterials() {
+  const composer = useApp(state => state.composer);
+  const contexts = useApp(state => state.contexts);
+  const summary = useApp(state => state.summary);
+  const { expected, missing } = useMemo(() => inheritedSources(composer.parents, documentMap(), contexts), [composer.parents, contexts, summary]);
+  if (composer.parents.length === 0) return null;
+  const grouped = new Map<string, { label: string; detail: string; origins: string[] }>();
+  for (const item of expected) {
+    if (composer.parents.includes(item.document_id) && !item.anchor_id) continue;
+    const key = item.anchor_id ? `a:${item.anchor_id}` : `d:${item.document_id}@${item.version}`;
+    const anchor = item.anchor_id ? summary?.anchors.find(entry => entry.id === item.anchor_id) : undefined;
+    const title = summary?.documents.find(doc => doc.id === (anchor?.document_id ?? item.document_id))?.title ?? '文稿';
+    const current = grouped.get(key) ?? {
+      label: anchor ? `「${anchor.quote.slice(0, 48)}」` : `整篇「${title}」`,
+      detail: `${title} · 版本 ${item.version ?? '?'}${anchor ? ' · 原片段' : ''}`,
+      origins: [],
+    };
+    if (!current.origins.includes(item.origin)) current.origins.push(item.origin);
+    grouped.set(key, current);
+  }
+  return (
+    <div className="space-y-1.5 rounded-lg border border-line px-2.5 py-2" data-testid="inherited-materials">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-medium text-ink-muted">{composer.parents.length > 1 ? `合并 ${composer.parents.length} 个分支` : '继续讨论'} · 继承材料</span>
+        <SegmentedControl
+          ariaLabel="继承方式"
+          size="sm"
+          className="ml-auto"
+          items={[{ id: 'discussion', label: '含上一轮问答' }, { id: 'fragments', label: '仅原片段' }]}
+          value={composer.inherit}
+          onChange={value => setInheritMode(value as 'discussion' | 'fragments')}
+        />
+      </div>
+      <ul className="space-y-0.5">
+        {Array.from(grouped.entries()).map(([key, item]) => (
+          <li key={key} className="text-[11.5px] text-ink">
+            <span className="block truncate" title={item.label}>{item.label}</span>
+            <span className="block truncate text-[11px] text-ink-muted">{item.detail} · {item.origins.join('、')}</span>
+          </li>
+        ))}
+      </ul>
+      {missing.map(item => <p key={item.id} className="text-[11px] text-[var(--rc-warn)]">「{item.title.slice(0, 30)}」{item.reason}；可在上方补选原片段。</p>)}
+      <p className="text-[11px] text-ink-muted">
+        {composer.inherit === 'discussion'
+          ? '当前服务以讨论文稿为入口时会沿来源关系读取来源文稿的当前全文；预览会列出与原材料的差异。精确继承需要后端冻结材料支持。'
+          : '只提交父讨论快照中的原片段及其历史版本，不包含上一轮问答。'}
+      </p>
+    </div>
+  );
+}
 
 function Composer() {
   const composer = useApp(state => state.composer);
@@ -55,6 +109,7 @@ function Composer() {
   return (
     <div className="space-y-2.5 rounded-2xl border border-line bg-surface-3 p-3 shadow-composer focus-within:shadow-composer-focus">
       <SegmentedControl ariaLabel="讨论模式" size="sm" items={MODES} value={composer.mode} onChange={mode => updateComposer({ mode })} />
+      <InheritedMaterials />
       <div className="flex flex-wrap gap-1.5" aria-label="上下文材料">
         {anchors.map(anchor => (
           <span key={anchor.id} className="flex w-full min-w-0 items-start gap-1.5 rounded-lg bg-clay/10 py-1 pl-2 pr-1 text-xs text-ink">
@@ -138,6 +193,7 @@ function Composer() {
 export function RunOutput({ run, compact = false }: { run: Run; compact?: boolean }) {
   const doc = useApp(state => state.summary?.documents.find(item => item.id === run.document_id));
   const proposal = useApp(state => (run.proposal_id ? state.proposals[run.proposal_id] : undefined));
+  const canvasProposal = useApp(state => (run.canvas_proposal_id ? state.canvasProposals[run.canvas_proposal_id] : undefined));
   const live = run.status === 'queued' || run.status === 'running';
   const { containerRef, handleScroll, markUserInput, showJumpControl, scrollToBottom } = useScrollPinning([run.answer]);
   const tone = run.status === 'succeeded' ? 'ok' : run.status === 'failed' || run.status === 'interrupted' ? 'bad' : run.status === 'cancelled' ? 'warn' : 'clay';
@@ -171,6 +227,13 @@ export function RunOutput({ run, compact = false }: { run: Run; compact?: boolea
         <div className="space-y-1 border-t border-line px-3 py-2 text-[11px]">
           {run.error && <p className="text-[var(--rc-bad)]">{run.error}</p>}
           {run.usage && <p className="tabular-nums text-ink-muted">{formatUsage(run.usage)}</p>}
+        </div>
+      )}
+      {run.status === 'succeeded' && run.canvas_proposal_id && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
+          <Button size="xs" variant="primary" onClick={() => void reopenCanvasProposal(run.canvas_proposal_id!)}>
+            {canvasProposal?.status === 'applied' ? '查看已写入的画布操作' : canvasProposal?.status === 'reverted' ? '查看已撤销的画布操作' : canvasProposal?.status === 'rejected' ? '查看已拒绝的画布操作' : '查看画布提案'}
+          </Button>
         </div>
       )}
       {run.status === 'succeeded' && (doc || run.proposal_id) && (

@@ -5,9 +5,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   applyProposal, branchFrom, createWorkspace, errorText, loadContext, loadProposal, openDocument, openWorkspace,
-  rejectProposal, renameWorkspace, restoreArchive, restoreVersion, revertProposal, setDialogs, toast, useApp,
+  rejectProposal, renameWorkspace, resolveUnsavedSwitch, restoreArchive, restoreVersion, revertProposal, setDialogs, toast, useApp,
 } from '../app/model';
 import { useSession } from '../app/useSession';
+import { scopeReport } from '../app/materials';
 import { diffText } from '../lib/diff';
 import { ANCHOR_STATUS_LABEL, excerpt, formatTime, formatUsage, KIND_LABEL, MODE_LABEL } from '../lib/format';
 import { reasonLabel } from '../panels/VersionsPanel';
@@ -26,6 +27,41 @@ function DiffView({ before, after }: { before: string; after: string }) {
 }
 
 // ---------------------------------------------------------------- 上下文预览
+/** 核对实际阅读范围与用户选择、父讨论冻结材料之间的差异。 */
+function ScopeCheck({ context }: { context: ResearchContext }) {
+  const expected = useApp(state => state.expectations[context.id]);
+  const summary = useApp(state => state.summary);
+  const report = useMemo(() => (expected ? scopeReport(context, expected) : null), [context, expected]);
+  if (!report) return null;
+  const title = (id: string) => summary?.documents.find(doc => doc.id === id)?.title ?? '文稿';
+  const clean = report.extra.length === 0 && report.shifted.length === 0 && report.missing.length === 0;
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-xs ${clean ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/40 bg-amber-500/10'}`} data-testid="scope-check">
+      <p className="font-medium text-ink">{clean ? '阅读范围与所选材料一致' : '阅读范围与所选材料存在差异'}</p>
+      <p className="mt-0.5 text-ink-secondary">与所选一致 {report.kept.length} 项{report.kept.some(item => item.origins.length > 1) ? '（部分来自多个分支）' : ''}。</p>
+      {report.extra.length > 0 && (
+        <div className="mt-1">
+          <p className="text-[var(--rc-warn)]">服务额外读取 {report.extra.length} 项（沿来源关系扩展，未经本次选择）：</p>
+          <ul className="list-disc pl-4 text-ink-secondary">{report.extra.map(source => <li key={source.number}>[来源{source.number}] {source.anchor_id ? '片段' : '整篇'}「{source.title}」版本 {source.version}</li>)}</ul>
+        </div>
+      )}
+      {report.shifted.length > 0 && (
+        <div className="mt-1">
+          <p className="text-[var(--rc-warn)]">版本与原材料不同：</p>
+          <ul className="list-disc pl-4 text-ink-secondary">{report.shifted.map(item => <li key={item.source.number}>「{item.source.title}」原为版本 {item.expected ?? '?'}，本次读取版本 {item.source.version}</li>)}</ul>
+        </div>
+      )}
+      {report.missing.length > 0 && (
+        <div className="mt-1">
+          <p className="text-[var(--rc-warn)]">未进入上下文：</p>
+          <ul className="list-disc pl-4 text-ink-secondary">{report.missing.map(item => <li key={`${item.anchor_id ?? item.document_id}-${item.version}`}>{item.anchor_id ? '片段' : `整篇「${title(item.document_id)}」`} 版本 {item.version ?? '?'}（{item.origin}）</li>)}</ul>
+        </div>
+      )}
+      {!clean && <p className="mt-1 text-ink-muted">精确的冻结继承需要后端支持；发送前可调整材料或继承方式。</p>}
+    </div>
+  );
+}
+
 function ContextBody({ context }: { context: ResearchContext }) {
   const [tab, setTab] = useState<'sources' | 'messages'>('sources');
   return (
@@ -38,6 +74,7 @@ function ContextBody({ context }: { context: ResearchContext }) {
         <span className="text-ink-muted">生成于 {formatTime(context.created_at)}</span>
       </div>
       <p className="rounded-lg bg-[var(--cds-alpha-1)] px-3 py-2 text-[13px] text-ink"><span className="text-ink-muted">问题：</span>{context.question}</p>
+      <ScopeCheck context={context} />
       <div className="flex gap-1 border-b border-line" role="tablist">
         {(['sources', 'messages'] as const).map(id => (
           <button key={id} role="tab" aria-selected={tab === id} type="button" onClick={() => setTab(id)} className={`rc-focus-ring -mb-px border-b-2 px-3 py-1.5 text-xs font-medium ${tab === id ? 'border-clay text-ink' : 'border-transparent text-ink-muted hover:text-ink'}`}>
@@ -52,7 +89,7 @@ function ContextBody({ context }: { context: ResearchContext }) {
             <li key={source.number} className="rounded-xl border border-line bg-surface-1 p-3">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-[11px] font-semibold text-clay">[来源{source.number}]</span>
-                <span className="min-w-0 truncate text-[13px] font-medium text-ink">{source.title}</span>
+                <span className="min-w-0 truncate text-[13px] font-medium text-ink">{source.title || '未命名想法'}</span>
                 <Chip>版本 {source.version}</Chip>
                 {source.anchor_id ? <><Chip tone="clay">精确选段</Chip><AnchorStatusChip status={source.anchor_status} /></> : <Chip>整篇</Chip>}
               </div>
@@ -114,7 +151,7 @@ function CompareColumn({ documentId }: { documentId: string }) {
             {context.sources.map(source => (
               <li key={source.number} className="flex items-center gap-1">
                 <span className="font-mono text-clay">[{source.number}]</span>
-                <span className="truncate">{source.anchor_id ? `「${excerpt(source.content, 24)}」` : source.title}</span>
+                <span className="truncate">{source.anchor_id ? `「${excerpt(source.content, 24)}」` : source.title || '未命名想法'}</span>
                 <span className="shrink-0 text-ink-muted">v{source.version}</span>
                 {source.anchor_status && <span className="shrink-0 text-ink-muted">{ANCHOR_STATUS_LABEL[source.anchor_status]}</span>}
               </li>
@@ -449,6 +486,37 @@ export function WorkspaceDialog() {
   );
 }
 
+/** 切换工作区时仍有保存失败或冲突的内容：编辑内容保留在旧会话中，由用户决定。 */
+function UnsavedDialog() {
+  const unsaved = useApp(state => state.unsaved);
+  const [busy, setBusy] = useState(false);
+  const act = async (action: 'retry' | 'review' | 'discard') => {
+    setBusy(true);
+    try { await resolveUnsavedSwitch(action); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={!!unsaved} onClose={() => void act('review')} title="还有内容没有保存" description="切换工作区前以下内容未能写入服务器。编辑内容仍保留在当前工作区。" width="max-w-lg"
+      footer={<>
+        <Button size="sm" variant="ghost" className="mr-auto text-[var(--rc-bad)]" disabled={busy} onClick={() => void act('discard')}>放弃这些修改并切换</Button>
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void act('retry')}>重试保存</Button>
+        <Button size="sm" variant="primary" disabled={busy} onClick={() => void act('review')}>返回处理</Button>
+      </>}>
+      <ul className="space-y-1.5" data-testid="unsaved-items">
+        {unsaved?.items.map(item => (
+          <li key={`${item.kind}:${item.id}`} className="rounded-lg border border-line px-3 py-2 text-xs">
+            <p className="flex items-center gap-1.5 text-ink">
+              <KindIcon kind={item.kind === 'canvas' ? 'canvas' : 'document'} className="text-ink-muted" />
+              <span className="min-w-0 flex-1 truncate">{item.title || '未命名'}</span>
+              <Chip tone={item.state === 'conflict' ? 'warn' : 'bad'}>{item.state === 'conflict' ? '版本冲突' : '保存失败'}</Chip>
+            </p>
+            {item.error && <p className="mt-1 text-ink-secondary">{item.error}</p>}
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}
+
 export function Dialogs() {
   useApp(state => state.dialogs);
   return (
@@ -460,6 +528,7 @@ export function Dialogs() {
       <SearchDialog />
       <PdfDialog />
       <WorkspaceDialog />
+      <UnsavedDialog />
     </>
   );
 }

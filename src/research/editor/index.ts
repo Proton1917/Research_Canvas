@@ -14,6 +14,7 @@ export function registerEditorElements() {
 export { ResearchEditorContainer } from './editor-container';
 export * from './extensions';
 export * from './projection';
+export * from './scene';
 export * from './selection';
 export * from './session';
 export { ResearchDoc, ResearchWorkspace } from './workspace';

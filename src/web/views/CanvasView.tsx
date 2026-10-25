@@ -1,37 +1,59 @@
 import { GfxControllerIdentifier } from '@editor/runtime/gfx';
 import type { BlockStdScope } from '@editor/runtime';
 import type { Store } from '@editor/document';
-import { ChatWithAiIcon, CloseIcon, EditIcon, ExpandFullIcon, ImportIcon, LinkIcon, NoteShadowDuotoneIcon, OpenInNewIcon, PlusIcon } from '@blocksuite/icons/rc';
+import {
+  ChatWithAiIcon, CloseIcon, CommentIcon, EditIcon, ExpandFullIcon, ImportIcon, LinkIcon, NoteShadowDuotoneIcon, OpenInNewIcon, PlusIcon, ViewIcon,
+} from '@blocksuite/icons/rc';
+import type { Anchor } from '@research';
+import { allSceneIds, projectScene, readSelection, regionBelow, type SceneCatalog, type SelectionTarget } from '@research/editor';
 import { Button, QuietDotsWave } from '@ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  addMaterialDocument, app, createDocument, createRelation, documentMap, errorText, getSession, importFiles, openDocument,
-  registerCanvasPlacer, renameCanvas, setCanvasSelection, useApp,
+  addMaterialDocument, app, createAnchor, createDocument, createRelation, discussInPlace, documentMap, errorText, getSession,
+  hideRelationOnCanvas, importFiles, openAsk, openBridge, openDocument, placeFragment, registerCanvasActions, relateConnector,
+  renameCanvas, setCanvasSelection, setSceneIds, setTab, toast, useApp,
 } from '../app/model';
+import { buildMaterials } from '../app/materials';
 import { useSession } from '../app/useSession';
-import { KindIcon, MenuItem, Popover, SaveIndicator } from '../components/common';
+import { Chip, KindIcon, MenuItem, Popover, SaveIndicator } from '../components/common';
 import { EditorHost } from '../components/EditorHost';
 import { ConflictBar } from '../components/ConflictBar';
 import { KIND_LABEL } from '../lib/format';
+import { BridgePanel } from './BridgeCard';
+import { CanvasAskPanel, WriteRegion } from './CanvasAsk';
+import { ProposalLayer, ProposalPanel } from './CanvasProposal';
 
 const CARD_SIZE = { width: 560, height: 420 };
 const SYNCED = 'affine:embed-synced-doc';
 export const DOC_DRAG_TYPE = 'application/x-research-canvas-document';
 
+type Subscribable = { subscribe(fn: () => void): { unsubscribe(): void } };
+
 type Gfx = {
-  viewport: { centerX: number; centerY: number; toModelCoordFromClientCoord(point: [number, number]): [number, number] };
-  selection: { selectedIds: string[]; slots: { updated: { subscribe(fn: () => void): { unsubscribe(): void } } }; set(selection: { elements: string[]; editing: boolean }): void };
+  viewport: {
+    centerX: number; centerY: number; zoom: number;
+    toModelCoordFromClientCoord(point: [number, number]): [number, number];
+    toViewCoord(x: number, y: number): [number, number];
+    setViewport(zoom: number, center: [number, number], smooth?: boolean): void;
+    width: number; height: number;
+    viewportUpdated: Subscribable;
+  };
+  selection: { selectedIds: string[]; slots: { updated: Subscribable }; set(selection: { elements: string[]; editing: boolean }): void };
   fitToScreen(options?: { smooth?: boolean; padding?: [number, number, number, number] }): void;
 };
 
-/** 从起点开始按环形网格寻找不与现有卡片重叠的位置。 */
-function freeSlot(store: Store, [x0, y0]: [number, number]): [number, number] {
+function xywhOf(model: { props: unknown }) {
+  return JSON.parse((model.props as { xywh: string }).xywh) as [number, number, number, number];
+}
+
+/** 从起点开始按环形网格寻找不与现有卡片、便笺重叠的位置。 */
+function freeSlot(store: Store, [x0, y0]: [number, number], size = CARD_SIZE): [number, number] {
   const gap = 48;
-  const rects = store.getModelsByFlavour(SYNCED).map(model => JSON.parse((model.props as unknown as { xywh: string }).xywh) as number[]);
-  const free = (x: number, y: number) => rects.every(([rx, ry, rw, rh]) => x + CARD_SIZE.width + gap <= rx || rx + rw + gap <= x || y + CARD_SIZE.height + gap <= ry || ry + rh + gap <= y);
-  const stepX = CARD_SIZE.width + gap;
-  const stepY = CARD_SIZE.height + gap;
+  const rects = store.getModelsByFlavour([SYNCED, 'affine:note']).filter(model => (model.props as { displayMode?: string }).displayMode !== 'doc').map(xywhOf);
+  const free = (x: number, y: number) => rects.every(([rx, ry, rw, rh]) => x + size.width + gap <= rx || rx + rw + gap <= x || y + size.height + gap <= ry || ry + rh + gap <= y);
+  const stepX = size.width + gap;
+  const stepY = size.height + gap;
   for (let ring = 0; ring < 12; ring++) {
     for (let dy = -ring; dy <= ring; dy++) {
       for (let dx = -ring; dx <= ring; dx++) {
@@ -49,18 +71,25 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const session = useSession();
   const canvas = useApp(state => state.summary?.canvases.find(item => item.id === canvasId));
   const documents = useApp(state => state.summary?.documents ?? []);
+  const relations = useApp(state => state.summary?.relations ?? []);
   const selection = useApp(state => state.canvasSelection);
+  const sceneIds = useApp(state => state.sceneIds);
+  const ask = useApp(state => (state.ask?.canvasId === canvasId ? state.ask : null));
+  const bridge = useApp(state => state.bridge);
+  const proposalOpen = useApp(state => !!state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId);
+  const proposalId = useApp(state => (state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId ? state.proposalDraft.id : null));
   const [store, setStore] = useState<Store | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picker, setPicker] = useState(false);
   const [name, setName] = useState(canvas?.name ?? '');
   const gfxRef = useRef<Gfx | null>(null);
-  const stdRef = useRef<BlockStdScope | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selectedCards, setSelectedCards] = useState<string[]>([]);
   const [peekId, setPeekId] = useState<string | null>(null);
   const [peekStore, setPeekStore] = useState<Store | null>(null);
+  const [, setViewTick] = useState(0);
   const pendingPeek = useApp(state => state.peekRequest);
+  const generation = session?.canvasGeneration(canvasId) ?? 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +124,8 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
       })
       .catch(err => !cancelled && setError(errorText(err)));
     return () => { cancelled = true; };
-  }, [canvasId, session]);
+    // 画布事务或冲突处理采用服务端状态后 generation 递增，重新挂载编辑器
+  }, [canvasId, session, generation]);
 
   const cardDocument = useCallback((blockId: string) => {
     const model = store?.getModelById(blockId);
@@ -106,18 +136,15 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     const s = getSession();
     const gfx = gfxRef.current;
     const doc = documentMap().get(documentId);
-    if (!s || !doc || !store) return;
+    if (!s || !doc || !store) return null;
     let x: number;
     let y: number;
     const nearCard = near ? store.getModelsByFlavour(SYNCED).find(model => (model.props as unknown as { pageId: string }).pageId === near) : undefined;
     if (point) {
       [x, y] = point;
     } else if (nearCard) {
-      const [nx, ny, nw] = JSON.parse((nearCard.props as unknown as { xywh: string }).xywh) as number[];
-      const siblings = store.getModelsByFlavour(SYNCED).filter(model => {
-        const [mx] = JSON.parse((model.props as unknown as { xywh: string }).xywh) as number[];
-        return mx >= nx + nw + 40;
-      }).length;
+      const [nx, ny, nw] = xywhOf(nearCard);
+      const siblings = store.getModelsByFlavour(SYNCED).filter(model => xywhOf(model)[0] >= nx + nw + 40).length;
       x = nx + nw + 120;
       y = ny + siblings * 60;
     } else {
@@ -125,37 +152,92 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     }
     const id = await s.addDocumentToCanvas(canvasId, doc, { x, y }, CARD_SIZE);
     gfx?.selection.set({ elements: [id], editing: false });
+    return id;
   }, [canvasId, store]);
+
+  const placeFragment = useCallback((anchor: Anchor, nearDocumentId?: string | null) => {
+    const s = getSession();
+    if (!s || !store) return null;
+    const title = documentMap().get(anchor.document_id)?.title ?? '文稿';
+    const size = { width: 420, height: 220 };
+    const card = nearDocumentId ? store.getModelsByFlavour(SYNCED).find(model => (model.props as unknown as { pageId: string }).pageId === nearDocumentId) : undefined;
+    const gfx = gfxRef.current;
+    const start: [number, number] = card
+      ? (() => { const [cx, cy, cw] = xywhOf(card); return [cx + cw + 80, cy]; })()
+      : gfx ? [gfx.viewport.centerX - size.width / 2, gfx.viewport.centerY - size.height / 2] : [0, 0];
+    const [x, y] = freeSlot(store, start, size);
+    const id = s.addFragmentToCanvas(canvasId, anchor, title, { x, y }, size.width);
+    gfx?.selection.set({ elements: [id], editing: false });
+    return id;
+  }, [canvasId, store]);
+
+  /** 按当前编辑器状态生成场景投影与材料清单；revision 取会话中已保存的画布版本。 */
+  const project = useCallback((ids: string[]) => {
+    const s = getSession();
+    const gfx = gfxRef.current;
+    const summary = app.get().summary;
+    if (!s || !gfx || !store || !summary || ids.length === 0) return null;
+    const catalog: SceneCatalog = {
+      workspaceId: summary.workspace.id,
+      canvasId,
+      canvasRevision: s.canvasStatus(canvasId)?.version ?? 0,
+      documents: documentMap(),
+      anchors: new Map(summary.anchors.map(anchor => [anchor.id, anchor])),
+      relations: new Map(summary.relations.map(relation => [relation.id, relation])),
+      contexts: app.get().contexts,
+      documentVersion: id => s.docStatus(id)?.version ?? null,
+      linkView: id => s.linkView(canvasId, id),
+      fragment: id => s.fragmentFor(canvasId, id),
+    };
+    const everything = allSceneIds(store);
+    const whole = everything.length > 0 && everything.every(id => ids.includes(id));
+    const projection = projectScene(store, ids, catalog, { zoom: gfx.viewport.zoom, centerX: gfx.viewport.centerX, centerY: gfx.viewport.centerY }, whole ? 'canvas' : 'selection');
+    // 直接选中分组或框时，投影展开其子对象
+    if (!whole && projection.objects.some(object => !object.via && (object.kind === 'group' || object.kind === 'frame'))) projection.entry = 'group';
+    return { projection, materials: buildMaterials(projection, summary.anchors, documentMap()) };
+  }, [canvasId, store]);
+
+  const openAskFor = useCallback((ids: string[]) => {
+    const result = project(ids);
+    if (!result) return;
+    openAsk({ canvasId, ids, ...result, region: regionBelow(result.projection.bounds), anchor: { left: 0, top: 0 } });
+  }, [canvasId, project]);
 
   useEffect(() => {
     if (!store) return;
-    registerCanvasPlacer((documentId, near) => placeDocument(documentId, near));
-    return () => registerCanvasPlacer(null);
-  }, [store, placeDocument]);
+    registerCanvasActions({ canvasId, place: placeDocument, placeFragment, ask: openAskFor, reproject: project });
+    return () => registerCanvasActions(null);
+  }, [store, canvasId, placeDocument, placeFragment, openAskFor, project]);
 
   const onReady = useCallback((_editor: unknown, std: BlockStdScope) => {
-    stdRef.current = std;
     const gfx = std.get(GfxControllerIdentifier) as unknown as Gfx;
     gfxRef.current = gfx;
     const update = () => {
       const ids = gfx.selection.selectedIds;
       const s = getSession();
-      const cards = ids.filter(id => cardDocument(id));
-      setSelectedCards(cards);
+      setSelectedCards(ids.filter(id => cardDocument(id)));
+      setSceneIds(ids);
       if (ids.length === 1) {
         const documentId = cardDocument(ids[0]);
         if (documentId) { setCanvasSelection({ kind: 'card', documentId, blockId: ids[0] }); return; }
-        const relationId = s?.relationForConnector(canvasId, ids[0]);
-        if (relationId) { setCanvasSelection({ kind: 'relation', relationId }); return; }
+        const view = s?.linkView(canvasId, ids[0]);
+        if (view?.relation_id) { setCanvasSelection({ kind: 'relation', relationId: view.relation_id, connectorId: ids[0] }); return; }
+        if (view) { setCanvasSelection({ kind: 'link', connectorId: ids[0] }); return; }
       }
       setCanvasSelection(null);
     };
     const subscription = gfx.selection.slots.updated.subscribe(update);
+    // 视口变化时重新计算浮层位置（世界坐标 → 视图坐标）
+    let frame = 0;
+    const viewport = gfx.viewport.viewportUpdated.subscribe(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setViewTick(value => value + 1));
+    });
     const s = getSession();
     if (s && s.canvasObjects(canvasId).length > 0) {
       requestAnimationFrame(() => gfx.fitToScreen({ padding: [80, 80, 80, 80] }));
     }
-    return () => subscription.unsubscribe();
+    return () => { subscription.unsubscribe(); viewport.unsubscribe(); cancelAnimationFrame(frame); setSceneIds([]); };
   }, [canvasId, cardDocument]);
 
   const onDrop = useCallback((event: DragEvent) => {
@@ -175,7 +257,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     const over = (event: DragEvent) => {
       if (event.dataTransfer?.types.includes(DOC_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); }
     };
-    // 画布中的文稿卡片为只读渲染；双击卡片在编辑浮层中编辑同一份文稿。
+    // 画布中的文稿卡片为只读渲染；双击卡片在当前研究区域旁展开编辑同一份文稿。
     const dblclick = (event: MouseEvent) => {
       const card = (event.target as HTMLElement | null)?.closest?.('affine-embed-edgeless-synced-doc-block') as HTMLElement | null;
       const documentId = card?.dataset.blockId ? cardDocument(card.dataset.blockId) : null;
@@ -202,8 +284,58 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   }, [store, session?.canvasStatus(canvasId)?.version, picker]);
 
   const status = session?.canvasStatus(canvasId) ?? null;
+  const held = session?.isCanvasHeld(canvasId) ?? false;
   const selectedDoc = selection?.kind === 'card' ? documents.find(doc => doc.id === selection.documentId) : undefined;
   const pairDocs = selectedCards.length === 2 ? selectedCards.map(id => cardDocument(id)).filter((id): id is string => !!id) : [];
+  const selectedRelation = selection?.kind === 'relation' ? relations.find(item => item.id === selection.relationId) : undefined;
+  const linkView = selection?.kind === 'link' ? session?.linkView(canvasId, selection.connectorId) ?? null : null;
+  const linkDocs = selection?.kind === 'link' ? session?.connectorDocuments(canvasId, selection.connectorId) ?? [null, null] : [null, null];
+  const detachedFrom = linkView?.detached_from ? relations.find(item => item.id === linkView.detached_from) : undefined;
+
+  // 浮层位置：就近提问面板放在所选范围右侧，空间不足时放在左侧
+  const gfx = gfxRef.current;
+  const toView = (x: number, y: number): [number, number] => gfx ? gfx.viewport.toViewCoord(x, y) : [x, y];
+  const zoom = gfx?.viewport.zoom ?? 1;
+  let askPosition = { left: 12, top: 12 };
+  if (ask && gfx && surface.current) {
+    const bounds = ask.projection.bounds;
+    const width = surface.current.clientWidth;
+    const height = surface.current.clientHeight;
+    if (bounds) {
+      const [x1, y1] = toView(bounds.x, bounds.y);
+      const [x2] = toView(bounds.x + bounds.width, bounds.y);
+      const left = x2 + 16 + 400 <= width ? x2 + 16 : x1 - 416 >= 0 ? x1 - 416 : width - 412;
+      askPosition = { left: Math.max(12, Math.min(left, width - 412)), top: Math.max(12, Math.min(y1, height - 320)) };
+    }
+  }
+
+  // 文稿在本画布中的卡片或片段卡片范围，用于候选联系预览连线
+  const instanceBounds = (documentId: string) => {
+    const s = getSession();
+    if (!store || !s) return null;
+    const card = store.getModelsByFlavour(SYNCED).find(model => (model.props as unknown as { pageId: string }).pageId === documentId);
+    const fragment = card ? null : s.fragmentCards(canvasId).find(([id, item]) => item.document_id === documentId && store.getModelById(id));
+    const model = card ?? (fragment ? store.getModelById(fragment[0]) : null);
+    if (!model) return null;
+    const [x, y, width, height] = xywhOf(model);
+    return { x, y, width, height };
+  };
+
+  // 提案打开时将视口移到候选区域，候选框按可读尺寸显示
+  useEffect(() => {
+    const view = gfxRef.current?.viewport;
+    const draft = app.get().proposalDraft;
+    if (!proposalId || !view || !draft) return;
+    const rects = draft.actions.flatMap(action => (action.type === 'create_document' || action.type === 'move_object' ? [action.bounds] : []));
+    if (rects.length === 0) return;
+    const x = Math.min(...rects.map(rect => rect.x));
+    const y = Math.min(...rects.map(rect => rect.y));
+    const right = Math.max(...rects.map(rect => rect.x + rect.width));
+    const bottom = Math.max(...rects.map(rect => rect.y + rect.height));
+    // 右侧留出提案面板宽度
+    const zoom = Math.min(1, (view.width - 480) / (right - x + 120), (view.height - 120) / (bottom - y + 120));
+    view.setViewport(Math.max(0.1, zoom), [(x + right) / 2 + 200 / Math.max(0.1, zoom), (y + bottom) / 2], true);
+  }, [proposalId]);
 
   const commitName = () => {
     const trimmed = name.trim();
@@ -227,11 +359,34 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
         />
         <SaveIndicator status={status} kind="canvas" />
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {sceneIds.length > 0 && (
+            <Button size="sm" variant="primary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor(sceneIds)}>
+              向 AI 提问{sceneIds.length > 1 ? `（${sceneIds.length}）` : ''}
+            </Button>
+          )}
+          {selectedDoc?.kind === 'discussion' && selection?.kind === 'card' && (
+            <Button size="sm" variant="secondary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor([selection.blockId])} title="以这次讨论及其冻结材料为起点继续追问，结果放在旁边">继续追问</Button>
+          )}
           {selectedDoc && (
             <>
-              <Button size="sm" variant="ghost" icon={<EditIcon width={16} height={16} />} onClick={() => setPeekId(selectedDoc.id)}>编辑内容</Button>
+              <Button size="sm" variant="ghost" icon={<EditIcon width={16} height={16} />} onClick={() => setPeekId(selectedDoc.id)}>展开编辑</Button>
               <Button size="sm" variant="ghost" icon={<OpenInNewIcon width={16} height={16} />} onClick={() => openDocument(selectedDoc.id)}>打开精读</Button>
               <Button size="sm" variant="ghost" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => addMaterialDocument(selectedDoc.id)}>作为讨论材料</Button>
+            </>
+          )}
+          {selectedRelation && selection?.kind === 'relation' && (
+            <>
+              <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => openBridge(selectedRelation.id, canvasId)}>研究这个联系</Button>
+              <Button size="sm" variant="ghost" icon={<ViewIcon width={16} height={16} />} onClick={() => hideRelationOnCanvas(selectedRelation.id)} title="只隐藏本画布中的连线，研究关系保留">在本画布隐藏</Button>
+            </>
+          )}
+          {selection?.kind === 'link' && (
+            <>
+              <Chip>{detachedFrom ? '已改接 · 原关系保留' : '纯视觉连线'}</Chip>
+              {linkDocs[0] && linkDocs[1] && linkDocs[0] !== linkDocs[1] && (
+                <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => void relateConnector(canvasId, selection.connectorId)}>研究这个联系</Button>
+              )}
+              {detachedFrom && <Button size="sm" variant="ghost" onClick={() => app.set({ selectedRelationId: detachedFrom.id, tab: 'relations', panelOpen: true })}>查看原关系</Button>}
             </>
           )}
           {pairDocs.length === 2 && pairDocs[0] !== pairDocs[1] && (
@@ -250,6 +405,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
           </div>
           <Button size="sm" variant="ghost" icon={<NoteShadowDuotoneIcon width={16} height={16} />} onClick={() => void createDocument('note', '', { place: true })}>新建想法</Button>
           <Button size="sm" variant="ghost" icon={<ImportIcon width={16} height={16} />} onClick={() => fileInput.current?.click()}>导入</Button>
+          {store && <Button size="sm" variant="ghost" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor(allSceneIds(store))} title="以整张画布为范围提问">整张画布</Button>}
           <Button size="icon-sm" variant="ghost" aria-label="显示全部内容" title="显示全部内容" icon={<ExpandFullIcon width={16} height={16} />} onClick={() => gfxRef.current?.fitToScreen({ smooth: true, padding: [80, 80, 80, 80] })} />
           <input
             ref={fileInput}
@@ -268,21 +424,31 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
       {status?.state === 'conflict' && <ConflictBar kind="canvas" id={canvasId} />}
       {status?.state === 'error' && (
         <div className="flex items-center gap-2 border-b border-line bg-orange-500/10 px-3 py-1.5 text-xs text-[var(--rc-bad)]">
-          画布布局保存失败：{status.error}
+          画布布局保存失败：{status.error}。画布内容仍保留在本页。
           <Button size="xs" variant="secondary" onClick={() => void getSession()?.saveCanvas(canvasId)}>重试</Button>
         </div>
       )}
+      {held && <div role="status" className="border-b border-line bg-clay/10 px-3 py-1.5 text-xs text-ink">正在提交画布写入，期间暂停编辑与自动保存。</div>}
       <div ref={surface} className="relative min-h-0 flex-1" data-testid="canvas-surface">
         {error && <div className="p-6 text-sm text-[var(--rc-bad)]">画布载入失败：{error}</div>}
         {!store && !error && <div className="flex h-full items-center justify-center"><QuietDotsWave label="载入画布" /></div>}
-        {store && <EditorHost store={store} mode="edgeless" onReady={onReady} />}
+        {store && <EditorHost key={generation} store={store} mode="edgeless" onReady={onReady} />}
+        {gfx && (ask || proposalOpen) && (
+          <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+            {ask && <WriteRegion ask={ask} toView={toView} zoom={zoom} />}
+            {proposalOpen && <ProposalLayer canvasId={canvasId} toView={toView} zoom={zoom} instanceBounds={instanceBounds} />}
+            {ask && <CanvasAskPanel ask={ask} left={askPosition.left} top={askPosition.top} />}
+            {proposalOpen && <ProposalPanel canvasId={canvasId} />}
+          </div>
+        )}
+        {bridge && (bridge.canvasId === canvasId || bridge.canvasId === null) && <BridgePanel relationId={bridge.relationId} />}
         {peekId && (
           <PeekEditor documentId={peekId} store={peekStore} onClose={() => setPeekId(null)} />
         )}
         {store && onCanvas.size === 0 && (
           <div className="pointer-events-none absolute inset-x-0 top-6 flex justify-center">
             <div className="pointer-events-auto rounded-xl border border-line bg-surface-2/95 px-4 py-3 text-center text-xs text-ink-secondary shadow-panel">
-              从左侧拖入文稿，或使用「放入文稿」「新建想法」「导入」开始组织研究
+              从左侧拖入文稿，或使用「放入文稿」「新建想法」「导入」开始组织研究；也可以直接画框、写便笺和连线
             </div>
           </div>
         )}
@@ -291,16 +457,81 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   );
 }
 
+type PeekFloating = { target: SelectionTarget; top: number; left: number } | null;
+
+/** 在画布当前研究区域旁展开编辑文稿；选段后原位弹出讨论入口。 */
 function PeekEditor({ documentId, store, onClose }: { documentId: string; store: Store | null; onClose: () => void }) {
   const session = useSession();
   const doc = useApp(state => state.summary?.documents.find(item => item.id === documentId));
+  const [floating, setFloating] = useState<PeekFloating>(null);
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const stdRef = useRef<BlockStdScope | null>(null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const updateFloating = useCallback(() => {
+    const std = stdRef.current;
+    const container = box.current;
+    if (!std || !store || !container) return;
+    const read = readSelection(std, store);
+    if (!read || 'error' in read) { setFloating(null); return; }
+    const domSelection = window.getSelection();
+    let rect: DOMRect | null = null;
+    if (domSelection && domSelection.rangeCount > 0 && !domSelection.isCollapsed) rect = domSelection.getRangeAt(0).getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) rect = std.view.getBlock(read.target.blockId)?.getBoundingClientRect() ?? null;
+    if (!rect) { setFloating(null); return; }
+    const bounds = container.getBoundingClientRect();
+    setFloating({
+      target: read.target,
+      left: Math.min(Math.max(rect.left + rect.width / 2 - bounds.left, 160), bounds.width - 160),
+      top: Math.max(rect.top - bounds.top - 46, 8),
+    });
+  }, [store]);
+
+  const onReady = useCallback((_editor: unknown, std: BlockStdScope) => {
+    stdRef.current = std;
+    const subscription = std.selection.slots.changed.subscribe(() => requestAnimationFrame(updateFloating));
+    const onSelection = () => requestAnimationFrame(updateFloating);
+    document.addEventListener('selectionchange', onSelection);
+    const container = box.current;
+    container?.addEventListener('scroll', onSelection, { capture: true, passive: true });
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener('selectionchange', onSelection);
+      container?.removeEventListener('scroll', onSelection, { capture: true });
+    };
+  }, [updateFloating]);
+
+  const act = async (action: 'discuss' | 'fragment' | 'anchor') => {
+    if (!floating) return;
+    setBusy(true);
+    try {
+      if (action === 'discuss') {
+        await discussInPlace(documentId, floating.target);
+      } else {
+        const anchor = await createAnchor(documentId, floating.target);
+        if (anchor && action === 'fragment') {
+          await placeFragment(anchor.id);
+          toast(`已放置片段卡片（版本 ${anchor.version}）`, 'success');
+        } else if (anchor) {
+          toast(`已记录批注锚点（版本 ${anchor.version}）`, 'success');
+          setTab('anchors');
+        }
+      }
+      stdRef.current?.selection.clear(['text', 'block']);
+      window.getSelection()?.removeAllRanges();
+      setFloating(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <section aria-label="编辑文稿卡片" className="rc-pop-in absolute bottom-3 right-3 top-3 z-20 flex w-[min(560px,calc(100%-24px))] flex-col overflow-hidden rounded-2xl border border-line bg-surface-2 shadow-popover">
+    <section aria-label="展开编辑文稿卡片" className="rc-pop-in absolute bottom-3 right-3 top-3 z-20 flex w-[min(560px,calc(100%-24px))] flex-col overflow-hidden rounded-2xl border border-line bg-surface-2 shadow-popover">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
         {doc && <KindIcon kind={doc.kind} className="text-ink-muted" />}
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{doc?.title || '未命名'}</span>
@@ -308,8 +539,21 @@ function PeekEditor({ documentId, store, onClose }: { documentId: string; store:
         <Button size="xs" variant="ghost" icon={<OpenInNewIcon width={14} height={14} />} onClick={() => openDocument(documentId)}>精读</Button>
         <Button size="icon-sm" variant="ghost" aria-label="关闭编辑浮层" icon={<CloseIcon width={16} height={16} />} onClick={onClose} />
       </div>
-      <div className="min-h-0 flex-1">
-        {store ? <EditorHost store={store} mode="page" /> : <div className="flex h-full items-center justify-center"><QuietDotsWave label="载入文稿" /></div>}
+      <div ref={box} className="relative min-h-0 flex-1">
+        {store ? <EditorHost store={store} mode="page" onReady={onReady} /> : <div className="flex h-full items-center justify-center"><QuietDotsWave label="载入文稿" /></div>}
+        {floating && (
+          <div
+            role="toolbar"
+            aria-label="画布选段操作"
+            className="rc-pop-in absolute z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border border-line bg-surface-popover p-1 shadow-popover"
+            style={{ top: floating.top, left: floating.left }}
+            onMouseDown={event => event.preventDefault()}
+          >
+            <Button size="sm" variant="ghost" disabled={busy} icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => void act('discuss')}>原位讨论</Button>
+            <Button size="sm" variant="ghost" disabled={busy} icon={<PlusIcon width={16} height={16} />} onClick={() => void act('fragment')}>放为片段卡片</Button>
+            <Button size="sm" variant="ghost" disabled={busy} icon={<CommentIcon width={16} height={16} />} onClick={() => void act('anchor')}>记为批注</Button>
+          </div>
+        )}
       </div>
     </section>
   );

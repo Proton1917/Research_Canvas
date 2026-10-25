@@ -1,9 +1,9 @@
-import { ChatWithAiIcon, FileIconPdfIcon, HistoryIcon, LinkIcon } from '@blocksuite/icons/rc';
+import { ChatWithAiIcon, EdgelessIcon, FileIconPdfIcon, HistoryIcon, LinkIcon } from '@blocksuite/icons/rc';
 import type { Anchor } from '@research';
 import { Button } from '@ui';
 import { useMemo } from 'react';
 
-import { addMaterialAnchor, openDocument, refreshResolutions, setDialogs, useApp } from '../app/model';
+import { addMaterialAnchor, openDocument, placeFragment, refreshResolutions, setDialogs, useApp } from '../app/model';
 import { AnchorStatusChip, Chip, EmptyState, SectionTitle } from '../components/common';
 import { ANCHOR_STATUS_HINT, excerpt, formatTime } from '../lib/format';
 
@@ -51,6 +51,7 @@ function AnchorItem({ anchor, showDocument }: { anchor: Anchor; showDocument: bo
           <Button size="xs" variant="ghost" icon={<FileIconPdfIcon width={14} height={14} />} onClick={() => setDialogs({ pdf: { assetId, page: anchor.page!, title: doc?.title ?? 'PDF' } })}>PDF 原页</Button>
         )}
         <Button size="xs" variant="ghost" icon={<ChatWithAiIcon width={14} height={14} />} onClick={() => addMaterialAnchor(anchor.id)}>加入讨论</Button>
+        <Button size="xs" variant="ghost" icon={<EdgelessIcon width={14} height={14} />} onClick={() => void placeFragment(anchor.id)}>放到画布</Button>
       </div>
     </li>
   );

@@ -360,6 +360,39 @@
       "route": "/",
       "kind": "drawer",
       "evidence": "observed"
+    },
+    {
+      "id": "canvas_ask",
+      "title": "画布原位提问",
+      "image": "screenshots/canvas_ask-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "popover",
+      "evidence": "observed",
+      "state": "多选想法卡与片段卡后在画布上提问：材料按正文/片段版本勾选，显示可写入的虚线区域；“在画布上创建”使用 mode=canvas，预览通过 scene-contexts 冻结投影",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（主数据库副本，后端为同一 Rust 服务，模型 cc/gemini-3.8-flash-high）实测，材料为 docs/Research_Canvas_conversation_2026-10-25.pdf。预览返回 2 项来源，阅读范围与所选一致。"
+    },
+    {
+      "id": "canvas_proposal",
+      "title": "AI 画布提案",
+      "image": "screenshots/canvas_proposal-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "候选框与候选连线在冻结写入区内预览；可拖动、改标题正文、排除单项；确认写入后可整组撤销，也可拒绝",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（主数据库副本，后端为同一 Rust 服务，模型 cc/gemini-3.8-flash-high）实测，材料为 docs/Research_Canvas_conversation_2026-10-25.pdf。实测写入（画布 r25→r26）、刷新后保持、整组撤销（候选文稿 404，卡片与连线恢复）、拒绝（无写入、画布版本不变）、超出写入区的 PATCH 被拒并保留草稿。"
+    },
+    {
+      "id": "bridge_review",
+      "title": "学科桥人工确认与待复核",
+      "image": "screenshots/bridge_review-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "五种状态（启发/候选/有支持/已确立/被反驳）；状态升级需勾选带版本的证据、填写依据并确认；确认后修改研究内容进入待复核，原判断保留",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（主数据库副本，后端为同一 Rust 服务，模型 cc/gemini-3.8-flash-high）实测，材料为 docs/Research_Canvas_conversation_2026-10-25.pdf。候选关系确认为“有支持”（claim r2，2 条片段证据），随后修改成立条件（携带 expected_claim_revision）变为 r3 待复核。"
     }
   ],
   "edges": [
@@ -600,6 +633,38 @@
       "action": "打开研究面板",
       "evidence": "observed",
       "back": "关闭"
+    },
+    {
+      "from": "canvas",
+      "to": "canvas_ask",
+      "action": "多选卡片 · 向 AI 提问",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "context",
+      "action": "预览上下文（场景上下文）",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "canvas_proposal",
+      "action": "在画布上创建 · 发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_proposal",
+      "to": "canvas",
+      "action": "确认写入 / 拒绝 / 撤销本次写入",
+      "evidence": "observed"
+    },
+    {
+      "from": "connector",
+      "to": "bridge_review",
+      "action": "选中连线 · 研究这个联系",
+      "evidence": "observed",
+      "back": "关闭"
     }
   ],
   "pending": [
@@ -608,13 +673,21 @@
       "reason": "自动化浏览器无法驱动系统输入法；输入框按 isComposing 跳过回车发送，已从源码确认，未做真机 IME 操作。"
     },
     {
-      "title": "保存冲突（409）提示条",
-      "reason": "需要两个客户端同时编辑同一文稿；冲突处理代码已接入，本轮未构造并发写入。"
-    },
-    {
       "title": "图片与 Markdown/文本导入",
       "reason": "本轮实测了 PDF 导入；其他格式共用同一导入入口，未逐一操作。"
+    },
+    {
+      "title": "画布模式运行的格式失败",
+      "reason": "后端 from_run 未剥离 ```json 围栏，实测 6 次画布运行中 3 次失败（界面保留问题与生成文本，可重发）；需后端修复后复测成功率。"
+    },
+    {
+      "title": "带依赖的撤销提示",
+      "reason": "dependent_changes 409 已接入提示；实测中先触发的是关系已修改与版本冲突，未单独构造“候选文稿被其他画布引用”的情形。"
+    },
+    {
+      "title": "保存冲突（409）提示条",
+      "reason": "需要两个客户端同时编辑同一文稿；冲突处理代码已接入，本轮未构造并发写入。"
     }
   ],
-  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。"
+  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。"
 }
