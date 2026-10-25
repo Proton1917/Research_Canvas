@@ -1,10 +1,10 @@
 import { CloseIcon, EdgelessIcon, GroupingIcon, OpenInNewIcon, SendIcon, StopIcon, ViewIcon } from '@blocksuite/icons/rc';
 import type { ResearchDocument, ResearchMode, Run } from '@research';
 import { Button, QuietDotsWave, SegmentedControl, StreamingCursor, useScrollPinning } from '@ui';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  app, branchFrom, cancelRun, documentMap, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
+  app, branchFrom, cancelRun, documentMap, loadContext, recoverCanvasRun, regenerateRun, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
   sendComposer, setDialogs, setInheritMode, setModel, togglePicked, updateComposer, useApp,
 } from '../app/model';
 import { inheritedSources } from '../app/materials';
@@ -190,6 +190,39 @@ function Composer() {
   );
 }
 
+/**
+ * 失败的画布运行：从原输出恢复提案，或用原 context_id 重新生成。
+ * 恢复失败时显示服务给出的具体格式错误，原输出与运行错误保持不变。
+ */
+function CanvasRecovery({ run }: { run: Run }) {
+  const mode = useApp(state => state.contexts[run.context_id]?.mode);
+  const available = useApp(state => !!state.capabilities?.canvas_proposal_recovery);
+  const [busy, setBusy] = useState<'recover' | 'regenerate' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (!mode) void loadContext(run.context_id); }, [mode, run.context_id]);
+  if (mode !== 'canvas') return null;
+  return (
+    <div className="space-y-1.5 border-t border-line px-3 py-2 text-[11px]" data-testid="canvas-recovery">
+      <p className="text-ink-secondary">画布操作未生成提案。原输出已保存{run.answer ? '' : '（无正文）'}；可从原输出恢复，或用同一冻结上下文重新生成。</p>
+      {error && <p role="alert" className="text-[var(--rc-bad)]">恢复失败：{error}</p>}
+      <div className="flex flex-wrap gap-1.5">
+        {available && run.answer && run.status === 'failed' && (
+          <Button size="xs" variant="primary" isLoading={busy === 'recover'} disabled={!!busy} onClick={async () => {
+            setBusy('recover');
+            setError(await recoverCanvasRun(run.id));
+            setBusy(null);
+          }}>从原输出恢复提案</Button>
+        )}
+        <Button size="xs" variant="secondary" isLoading={busy === 'regenerate'} disabled={!!busy} onClick={async () => {
+          setBusy('regenerate');
+          await regenerateRun(run);
+          setBusy(null);
+        }}>按原上下文重新生成</Button>
+      </div>
+    </div>
+  );
+}
+
 export function RunOutput({ run, compact = false }: { run: Run; compact?: boolean }) {
   const doc = useApp(state => state.summary?.documents.find(item => item.id === run.document_id));
   const proposal = useApp(state => (run.proposal_id ? state.proposals[run.proposal_id] : undefined));
@@ -229,6 +262,7 @@ export function RunOutput({ run, compact = false }: { run: Run; compact?: boolea
           {run.usage && <p className="tabular-nums text-ink-muted">{formatUsage(run.usage)}</p>}
         </div>
       )}
+      {(run.status === 'failed' || run.status === 'interrupted') && !run.canvas_proposal_id && <CanvasRecovery run={run} />}
       {run.status === 'succeeded' && run.canvas_proposal_id && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
           <Button size="xs" variant="primary" onClick={() => void reopenCanvasProposal(run.canvas_proposal_id!)}>

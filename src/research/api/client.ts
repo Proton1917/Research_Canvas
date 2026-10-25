@@ -90,7 +90,8 @@ export const api = {
   updateCanvas: (id: string, input: { expected_revision: number; name: string; objects: CanvasObject[]; editor_state?: unknown }) =>
     request<Canvas>(`/canvases/${enc(id)}`, { method: 'PUT', json: input }),
 
-  createRelation: (workspaceId: string, input: RelationInput & { source_id: string; target_id: string }) =>
+  /** 文稿端点可只给 source_id / target_id；片段与自由想法使用 source_ref / target_ref */
+  createRelation: (workspaceId: string, input: RelationInput) =>
     request<Relation>(`/workspaces/${enc(workspaceId)}/relations`, { method: 'POST', json: input }),
   updateRelation: (id: string, input: RelationInput) => request<Relation>(`/relations/${enc(id)}`, { method: 'PATCH', json: input }),
   deleteRelation: (id: string) => request<void>(`/relations/${enc(id)}`, { method: 'DELETE' }),
@@ -123,6 +124,8 @@ export const api = {
   listRuns: (workspaceId: string) => request<Run[]>(`/workspaces/${enc(workspaceId)}/runs`),
   getRun: (id: string) => request<Run>(`/runs/${enc(id)}`),
   cancelRun: (id: string) => request<Run>(`/runs/${enc(id)}/cancel`, { method: 'POST' }),
+  /** 从失败画布运行的原输出恢复提案；JSON 内容无效时返回具体错误 */
+  recoverCanvasProposal: (id: string) => request<Run>(`/runs/${enc(id)}/recover-canvas-proposal`, { method: 'POST' }),
 
   getProposal: (id: string) => request<Proposal>(`/proposals/${enc(id)}`),
   applyProposal: (id: string, expected_version: number) => request<ProposalResult>(`/proposals/${enc(id)}/apply`, { method: 'POST', json: { expected_version } }),

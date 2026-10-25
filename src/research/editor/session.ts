@@ -8,7 +8,7 @@ import * as Y from 'yjs';
 
 import { api, ApiError } from '../api/client';
 import type {
-  Anchor, Bounds, Canvas, CanvasAction, CanvasObject, Content, EditorStateEnvelope, ProposalEndpoint, FragmentCard, ImportResult, LinkView, Relation, ResearchDocument, TextBlock,
+  Anchor, Bounds, Canvas, CanvasAction, CanvasObject, Content, EditorStateEnvelope, ProposalEndpoint, FragmentCard, ImportResult, LinkView, Relation, ResearchDocument, ResearchEndpoint, TextBlock,
 } from '../api/types';
 import { AssetBlobSource } from './blob-source';
 import { getStoreExtensions } from './extensions';
@@ -118,6 +118,18 @@ type SurfaceLike = {
   deleteElement(id: string): void;
   hasElementById(id: string): boolean;
 };
+
+/** 连线一端在画布上的研究对象：文稿卡片、片段卡片（锚点）或自由想法实例。 */
+export type ConnectorEnd =
+  | { type: 'document'; id: string; instance: string }
+  | { type: 'anchor'; id: string; documentId: string; instance: string }
+  | { type: 'free'; instance: string };
+
+/** 关系的语义端点；旧关系只有文稿标识。 */
+export function relationEndpoint(relation: Relation, side: 'source' | 'target'): ResearchEndpoint {
+  const ref = side === 'source' ? relation.source_ref : relation.target_ref;
+  return ref ?? { type: 'document', id: side === 'source' ? relation.source_id : relation.target_id };
+}
 
 /** 画布连线生命周期中需要界面告知用户的结果。 */
 export type LinkEvent =
@@ -775,14 +787,12 @@ export class ResearchSession {
    * 关系 → 连线：为两端都在画布、未隐藏且尚无视图的研究关系补齐连线；
    * 移除绑定已删除关系的连线。先完成本地视图簿记，缺失的连线不会被重新生成。
    */
-  syncCanvasRelations(canvasId: string, persist = true) {
+  syncCanvasRelations(canvasId: string, persist = true): boolean {
     const entry = this._canvases.get(canvasId);
-    if (!entry || entry.store.readonly) return;
+    if (!entry || entry.store.readonly) return false;
     const surface = this._surface(entry.store);
-    if (!surface) return;
+    if (!surface) return false;
     let changed = this._reconcileViews(entry);
-    const cardByDoc = new Map<string, string>();
-    for (const [cardId, pageId] of this._cardDocuments(entry)) if (!cardByDoc.has(pageId)) cardByDoc.set(pageId, cardId);
     const relationIds = new Set(this._relations.map(relation => relation.id));
     entry.suppress++;
     try {
@@ -798,8 +808,8 @@ export class ResearchSession {
       const bound = new Set(Array.from(entry.views.values()).map(view => view.relation_id).filter((id): id is string => !!id));
       for (const relation of this._relations) {
         if (bound.has(relation.id) || entry.hidden.has(relation.id)) continue;
-        const source = cardByDoc.get(relation.source_id);
-        const target = cardByDoc.get(relation.target_id);
+        const source = this._locate(entry, entry.store, relationEndpoint(relation, 'source'), false);
+        const target = this._locate(entry, entry.store, relationEndpoint(relation, 'target'), false);
         if (!source || !target) continue;
         const connectorId = this._addConnector(surface, source, target, relation.kind === 'context');
         entry.views.set(connectorId, {
@@ -813,6 +823,7 @@ export class ResearchSession {
     }
     // 载入时补齐的连线只用于显示；用户操作引起的视图变化才写入画布布局。
     if (changed && persist) this._markCanvasDirty(entry);
+    return changed;
   }
 
   private _addConnector(surface: SurfaceLike, source: string, target: string, context: boolean) {
@@ -853,13 +864,23 @@ export class ResearchSession {
     return result;
   }
 
-  /** 用户显式恢复隐藏关系在本画布的显示。两端卡片不在画布时保持未放置。 */
-  showRelation(canvasId: string, relationId: string) {
+  /**
+   * 用户显式恢复隐藏关系在本画布的显示。两端未都放置时保持未放置。
+   * 只有隐藏记录被移除或连线视图实际变化时才写入画布布局。
+   */
+  showRelation(canvasId: string, relationId: string): { unhidden: boolean; views: number; placed: [boolean, boolean] } {
     const entry = this._canvases.get(canvasId);
-    if (!entry) return;
-    entry.hidden.delete(relationId);
-    this._markCanvasDirty(entry);
-    this.syncCanvasRelations(canvasId);
+    const relation = this._relations.find(item => item.id === relationId);
+    if (!entry || !relation) return { unhidden: false, views: 0, placed: [false, false] };
+    const unhidden = entry.hidden.delete(relationId);
+    const changed = this.syncCanvasRelations(canvasId, false);
+    if (unhidden || changed) this._markCanvasDirty(entry);
+    const views = Array.from(entry.views.values()).filter(view => view.relation_id === relationId).length;
+    const placed: [boolean, boolean] = [
+      !!this._locate(entry, entry.store, relationEndpoint(relation, 'source'), false),
+      !!this._locate(entry, entry.store, relationEndpoint(relation, 'target'), false),
+    ];
+    return { unhidden, views, placed };
   }
 
   /** 从画布隐藏关系的全部视图，研究关系保留。 */
@@ -886,13 +907,53 @@ export class ResearchSession {
     this._markCanvasDirty(entry);
   }
 
-  /** 连线两端对应的文稿（仅文稿卡片端点）。 */
-  connectorDocuments(canvasId: string, connectorId: string): [string | null, string | null] {
+  /** 连线两端的研究对象。自由端点或无法读取内容的图形返回 null。 */
+  connectorEndpoints(canvasId: string, connectorId: string): [ConnectorEnd | null, ConnectorEnd | null] {
     const entry = this._canvases.get(canvasId);
     const view = entry?.views.get(connectorId);
     if (!entry || !view) return [null, null];
     const cards = this._cardDocuments(entry);
-    return [view.source_instance ? cards.get(view.source_instance) ?? null : null, view.target_instance ? cards.get(view.target_instance) ?? null : null];
+    const surface = this._surface(entry.store);
+    const end = (instance: string | null): ConnectorEnd | null => {
+      if (!instance) return null;
+      const doc = cards.get(instance);
+      if (doc) return { type: 'document', id: doc, instance };
+      const fragment = entry.fragments.get(instance);
+      if (fragment) return { type: 'anchor', id: fragment.anchor_id, documentId: fragment.document_id, instance };
+      const block = entry.store.getModelById(instance);
+      if (block && ['affine:note', 'affine:edgeless-text'].includes(block.flavour)) return { type: 'free', instance };
+      const element = surface?.hasElementById(instance) ? surface.getElementsByType('shape').concat(surface.getElementsByType('text')).find(item => item.id === instance) : null;
+      return element ? { type: 'free', instance } : null;
+    };
+    return [end(view.source_instance), end(view.target_instance)];
+  }
+
+  /** 端点在画布中的实例：文稿取卡片，锚点取片段卡片，自由想法与场景对象直接使用实例标识。 */
+  locateEndpoint(canvasId: string, endpoint: ResearchEndpoint | ProposalEndpoint): string | null {
+    const entry = this._canvases.get(canvasId);
+    return entry ? this._locate(entry, entry.store, endpoint, true) : null;
+  }
+
+  private _locate(entry: CanvasEntry, store: Store, endpoint: ResearchEndpoint | ProposalEndpoint, documentFragments: boolean): string | null {
+    const surface = store.getModelsByFlavour('affine:surface')[0] as unknown as SurfaceLike | undefined;
+    const exists = (id: string) => !!store.getModelById(id) || !!surface?.hasElementById(id);
+    switch (endpoint.type) {
+      case 'document': {
+        const card = store.getModelsByFlavour(SYNCED_DOC).find(model => (model.props as unknown as { pageId: string }).pageId === endpoint.id);
+        if (card) return card.id;
+        // 提案预览：文稿没有卡片时退回到该文稿的片段卡片
+        if (!documentFragments) return null;
+        return Array.from(entry.fragments).find(([id, fragment]) => fragment.document_id === endpoint.id && exists(id))?.[0] ?? null;
+      }
+      case 'anchor':
+        return Array.from(entry.fragments).find(([id, fragment]) => fragment.anchor_id === endpoint.id && exists(id))?.[0] ?? null;
+      case 'canvas_object':
+        return endpoint.canvas_id === entry.id && exists(endpoint.instance_id) ? endpoint.instance_id : null;
+      case 'scene':
+        return exists(endpoint.object_id) ? endpoint.object_id : null;
+      default:
+        return null;
+    }
   }
 
   /**
@@ -949,12 +1010,10 @@ export class ResearchSession {
           else if (surface.hasElementById(action.object_id)) surface.updateElement(action.object_id, { xywh: xywh(action.bounds) });
         }
       }
-      // 研究关系端点：新建文稿取其实例；已有文稿优先取文稿卡片，其次取该文稿的片段卡片
+      // 研究关系端点：新建文稿取其实例；已有文稿取卡片（无卡片时取其片段卡片），锚点取片段卡片，场景端点直接使用实例
       const instanceFor = (endpoint: ProposalEndpoint) => {
         if (endpoint.type === 'created') return idMap[`${endpoint.key}:object`] ?? null;
-        const card = store.getModelsByFlavour(SYNCED_DOC).find(model => (model.props as unknown as { pageId: string }).pageId === endpoint.id);
-        if (card) return card.id;
-        return Array.from(fragments).find(([id, fragment]) => fragment.document_id === endpoint.id && store.getModelById(id))?.[0] ?? null;
+        return this._locate(entry, store, endpoint, true);
       };
       for (const action of actions) {
         if (action.type !== 'create_relation') continue;

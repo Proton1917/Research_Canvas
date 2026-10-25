@@ -1,13 +1,13 @@
 // 学科桥卡：用户选择“研究这个联系”后，对一条研究关系做结构化编辑与状态确认。
 //
-// 研究内容（映射、保持的运算、条件、反例、出处）通过 PATCH /relations/{id} 保存，附 expected_claim_revision；
+// 研究内容（映射、保持的运算、条件、反例、出处、尚缺论证、下一步验证）通过 PATCH /relations/{id} 保存，附 expected_claim_revision；
 // 状态变更通过 POST /relations/{id}/review 提交带版本的证据、判断依据与人工确认。
 import { ArrowRightSmallIcon, CloseIcon, DeleteIcon, PlusIcon } from '@blocksuite/icons/rc';
 import { api, type Anchor, type Claim, type ClaimStatus, type EvidenceRef, type EvidenceRole, type Relation, type ReviewRequest } from '@research';
 import { Button } from '@ui';
 import { useEffect, useMemo, useState } from 'react';
 
-import { closeBridge, emptyClaim, errorText, openDocument, setDialogs, toast, updateRelation, upsertRelationFromServer, useApp } from '../app/model';
+import { closeBridge, emptyClaim, endpointInfo, errorText, openDocument, setDialogs, toast, updateRelation, upsertRelationFromServer, useApp } from '../app/model';
 import { AnchorStatusChip, Chip, KindIcon } from '../components/common';
 import { CLAIM_STATUS_LABEL, excerpt, formatTime } from '../lib/format';
 
@@ -28,25 +28,22 @@ export function bridgeStatusOf(claim: Claim | null): ReviewStatus {
   return claim.status === 'verified' ? 'established' : claim.status;
 }
 
-const PENDING = '后端 Claim 尚未提供该字段，已列入交接';
+const ENDPOINT_TYPE: Record<string, string> = { document: '文稿', anchor: '片段', canvas_object: '想法' };
 
-function Endpoint({ id }: { id: string }) {
-  const doc = useApp(state => state.summary?.documents.find(item => item.id === id));
+/** 关系一端：文稿打开原文，片段打开引用版本并定位，自由想法显示冻结时的文字。 */
+export function Endpoint({ relation, side }: { relation: Relation; side: 'source' | 'target' }) {
+  const info = useApp(state => endpointInfo(relation, side, state));
+  const doc = useApp(state => (info.documentId ? state.summary?.documents.find(item => item.id === info.documentId) : undefined));
+  const open = () => {
+    if (info.type === 'anchor' && info.documentId && info.anchorId && info.version != null) setDialogs({ version: { documentId: info.documentId, version: info.version, anchorId: info.anchorId } });
+    else if (info.type === 'document' && doc) openDocument(doc.id);
+  };
   return (
-    <button type="button" onClick={() => doc && openDocument(doc.id)} className="rc-focus-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-[var(--cds-alpha-1)] px-2 py-1.5 text-left text-xs text-ink hover:bg-[var(--cds-fill-ghost-hover)]">
-      {doc && <KindIcon kind={doc.kind} className="shrink-0 text-ink-muted" />}
-      <span className="min-w-0 flex-1 truncate">{doc?.title || '已删除文稿'}</span>
-      {doc && <Chip className="shrink-0">v{doc.current_version}</Chip>}
+    <button type="button" onClick={open} title={info.detail} data-testid={`bridge-endpoint-${side}`} className="rc-focus-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-[var(--cds-alpha-1)] px-2 py-1.5 text-left text-xs text-ink hover:bg-[var(--cds-fill-ghost-hover)]">
+      {info.type === 'document' && doc ? <KindIcon kind={doc.kind} className="shrink-0 text-ink-muted" /> : <Chip className="shrink-0">{ENDPOINT_TYPE[info.type]}</Chip>}
+      <span className="min-w-0 flex-1 truncate">{info.title}</span>
+      {info.version != null && <Chip className="shrink-0">v{info.version}</Chip>}
     </button>
-  );
-}
-
-function PendingField({ label }: { label: string }) {
-  return (
-    <div className="space-y-1">
-      <span className="text-[11px] font-medium text-ink-muted">{label}</span>
-      <p className="rounded-lg border border-dashed border-line px-2.5 py-2 text-[11px] text-ink-muted">{PENDING}</p>
-    </div>
   );
 }
 
@@ -127,6 +124,7 @@ function ReviewForm({ relation, status, candidates, onDone }: { relation: Relati
         我已审阅上述证据并确认此状态。AI 的建议不会自动改变状态。
       </label>
       {missing && <p className="text-[var(--rc-warn)]">{missing}</p>}
+      {needsSupport && relation.claim?.missing_proof?.trim() && <p className="text-[var(--rc-warn)]">该联系仍记录了证据缺口：{excerpt(relation.claim.missing_proof, 120)}。请确认所选证据已覆盖，或保持候选状态。</p>}
       {error && <p role="alert" className="text-[var(--rc-bad)]">{error}</p>}
       <div className="flex gap-1.5">
         <Button size="xs" variant="ghost" onClick={onDone}>取消</Button>
@@ -158,25 +156,35 @@ export function BridgeCard({ relation }: { relation: Relation }) {
   }, [relation]);
 
   const status = bridgeStatusOf(relation.claim);
-  const related = anchors.filter(anchor => anchor.document_id === relation.source_id || anchor.document_id === relation.target_id);
+  const source = useApp(state => endpointInfo(relation, 'source', state));
+  const target = useApp(state => endpointInfo(relation, 'target', state));
+  // 两端涉及的文稿：文稿端点本身，片段端点所属文稿；自由想法没有可引用的版本
+  const endpointDocs = [source.documentId, target.documentId].filter((id): id is string => !!id);
+  const endpointAnchors = [source.anchorId, target.anchorId].filter((id): id is string => !!id);
+  const related = anchors.filter(anchor => endpointDocs.includes(anchor.document_id) || endpointAnchors.includes(anchor.id));
   const reviews = relation.claim?.reviews ?? [];
   const lastReview = reviews[reviews.length - 1];
   const preserved = operations.split('\n').map(item => item.trim()).filter(Boolean);
   const dirty = label !== relation.label || claim.mapping !== base.mapping || JSON.stringify(preserved) !== JSON.stringify(base.preserved_operations ?? [])
-    || claim.conditions !== base.conditions || claim.counterexamples !== base.counterexamples || JSON.stringify(claim.sources) !== JSON.stringify(base.sources);
+    || claim.conditions !== base.conditions || claim.counterexamples !== base.counterexamples || JSON.stringify(claim.sources) !== JSON.stringify(base.sources)
+    || (claim.missing_proof ?? '') !== (base.missing_proof ?? '') || (claim.next_validation ?? '') !== (base.next_validation ?? '');
+  const gap = relation.claim?.missing_proof?.trim() ?? '';
 
   const candidates = useMemo<Candidate[]>(() => {
     const title = (id: string) => documents.find(doc => doc.id === id)?.title ?? '文稿';
-    const list: Candidate[] = related.map((anchor: Anchor) => ({
-      key: `anchor:${anchor.id}`, label: `「${excerpt(anchor.quote, 50)}」${title(anchor.document_id)} · 版本 ${anchor.version}`,
+    // 端点片段排在前面：精确锚点本身就是最直接的证据
+    const ordered = [...related].sort((a, b) => Number(endpointAnchors.includes(b.id)) - Number(endpointAnchors.includes(a.id)));
+    const list: Candidate[] = ordered.map((anchor: Anchor) => ({
+      key: `anchor:${anchor.id}`, label: `「${excerpt(anchor.quote, 50)}」${title(anchor.document_id)} · 版本 ${anchor.version}${endpointAnchors.includes(anchor.id) ? ' · 端点片段' : ''}`,
       ref: { document_id: anchor.document_id, version: anchor.version, anchor_id: anchor.id },
     }));
-    for (const id of [relation.source_id, relation.target_id]) {
+    for (const id of new Set(endpointDocs)) {
       const doc = documents.find(item => item.id === id);
       if (doc) list.push({ key: `doc:${id}`, label: `整篇「${doc.title}」· 版本 ${doc.current_version}`, ref: { document_id: id, version: doc.current_version, anchor_id: null } });
     }
     return list;
-  }, [related, documents, relation.source_id, relation.target_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [related, documents, endpointDocs.join(), endpointAnchors.join()]);
 
   const addSource = (value: string) => {
     const trimmed = value.trim();
@@ -198,10 +206,19 @@ export function BridgeCard({ relation }: { relation: Relation }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-1.5">
-        <Endpoint id={relation.source_id} />
+        <Endpoint relation={relation} side="source" />
         <ArrowRightSmallIcon width={18} height={18} className="shrink-0 text-ink-muted" aria-hidden="true" />
-        <Endpoint id={relation.target_id} />
+        <Endpoint relation={relation} side="target" />
       </div>
+      {(source.type === 'canvas_object' || target.type === 'canvas_object') && (
+        <p className="text-[11px] text-ink-muted">想法端点引用建立关系时冻结的画布场景，显示当时的文字；想法后续修改不改变此关系的端点内容。</p>
+      )}
+      {gap && status === 'candidate' && (
+        <div role="status" className="rounded-lg border border-line bg-[var(--cds-alpha-1)] px-2.5 py-2 text-[11px]" data-testid="evidence-gap">
+          <p className="font-medium text-[var(--rc-warn)]">证据缺口 · 保持候选</p>
+          <p className="mt-0.5 whitespace-pre-wrap text-ink-secondary">{gap}</p>
+        </div>
+      )}
       {relation.claim?.review_required && (
         <div role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-ink" data-testid="review-required">
           <p className="font-medium text-[var(--rc-warn)]">待复核 · 原判断「{CLAIM_STATUS_LABEL[relation.claim.status]}」保留</p>
@@ -299,8 +316,14 @@ export function BridgeCard({ relation }: { relation: Relation }) {
         <label htmlFor="bridge-counter" className="text-[11px] font-medium text-ink-muted">反例与失效情形</label>
         <textarea id="bridge-counter" rows={2} className="rc-input resize-y text-[13px]" value={claim.counterexamples} onChange={event => setClaim({ ...claim, counterexamples: event.target.value })} />
       </div>
-      <PendingField label="尚缺论证" />
-      <PendingField label="下一步验证方法" />
+      <div className="space-y-1">
+        <label htmlFor="bridge-missing" className="text-[11px] font-medium text-ink-muted">尚缺论证</label>
+        <textarea id="bridge-missing" rows={2} className="rc-input resize-y text-[13px]" placeholder="还缺哪些推导、文献或数据才能支持这个联系" value={claim.missing_proof ?? ''} onChange={event => setClaim({ ...claim, missing_proof: event.target.value })} />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="bridge-next" className="text-[11px] font-medium text-ink-muted">下一步验证方法</label>
+        <textarea id="bridge-next" rows={2} className="rc-input resize-y text-[13px]" placeholder="例如：在平坦联络下逐项比较 Chen 迭代积分与森林公式的系数" value={claim.next_validation ?? ''} onChange={event => setClaim({ ...claim, next_validation: event.target.value })} />
+      </div>
       {error && <p role="alert" className="text-xs text-[var(--rc-bad)]">{error}</p>}
       <Button size="sm" variant="primary" disabled={!dirty} isLoading={saving} onClick={() => void save()}>保存研究内容</Button>
     </div>

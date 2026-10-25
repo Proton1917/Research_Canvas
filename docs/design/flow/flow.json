@@ -393,6 +393,50 @@
       "evidence": "observed",
       "state": "五种状态（启发/候选/有支持/已确立/被反驳）；状态升级需勾选带版本的证据、填写依据并确认；确认后修改研究内容进入待复核，原判断保留",
       "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（主数据库副本，后端为同一 Rust 服务，模型 cc/gemini-3.8-flash-high）实测，材料为 docs/Research_Canvas_conversation_2026-10-25.pdf。候选关系确认为“有支持”（claim r2，2 条片段证据），随后修改成立条件（携带 expected_claim_revision）变为 r3 待复核。"
+    },
+    {
+      "id": "typed_endpoints",
+      "title": "片段与想法端点的研究关系",
+      "image": "screenshots/typed_endpoints-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "便笺连到片段卡片后“研究这个联系”：先冻结场景，关系记录 canvas_object → anchor；学科桥显示想法冻结时的文字与片段原文及版本",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端为当前版本，模型 cc/gemini-3.8-flash-high）实测。另验证片段卡片 → 文稿卡片得到 anchor → document；删除连线后刷新不重建，“在本画布显示”按类型化端点补回。"
+    },
+    {
+      "id": "proposal_typed",
+      "title": "片段与想法之间的候选联系提案",
+      "image": "screenshots/proposal_typed-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "模型返回 anchor → scene 端点；预览虚线连接片段卡片与便笺，提案行显示两端名称与证据缺口；确认后关系为 anchor → canvas_object，可整组撤销",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端为当前版本，模型 cc/gemini-3.8-flash-high）实测。提案 1be196e5：写入（画布 r41）后撤销（关系 404，连线与视图移除）。"
+    },
+    {
+      "id": "bridge_gap",
+      "title": "证据缺口与下一步验证",
+      "image": "screenshots/bridge_gap-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "候选关系记录尚缺论证时显示“证据缺口 · 保持候选”；尚缺论证与下一步验证方法可编辑并随研究内容保存",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端为当前版本，模型 cc/gemini-3.8-flash-high）实测。AI 候选联系的 missing_proof/next_validation 写入后显示；修改下一步验证方法保存为 claim r2。"
+    },
+    {
+      "id": "run_recovery",
+      "title": "失败画布运行的恢复",
+      "image": "screenshots/run_recovery-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "失败的画布运行提供“从原输出恢复提案”与“按原上下文重新生成”；内容无效时显示具体格式错误，原输出保留",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端为当前版本，模型 cc/gemini-3.8-flash-high）实测。两条历史失败运行恢复时分别返回未知字段与非法转义；按原上下文重新生成得到提案 8f2b66e1，并在画布版本变化后按当前画布确认写入。"
     }
   ],
   "edges": [
@@ -665,6 +709,37 @@
       "action": "选中连线 · 研究这个联系",
       "evidence": "observed",
       "back": "关闭"
+    },
+    {
+      "from": "connector",
+      "to": "typed_endpoints",
+      "action": "片段或便笺连线 · 研究这个联系",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "proposal_typed",
+      "action": "选中片段与便笺 · 在画布上创建",
+      "evidence": "observed"
+    },
+    {
+      "from": "proposal_typed",
+      "to": "canvas",
+      "action": "确认写入 / 撤销本次写入",
+      "evidence": "observed"
+    },
+    {
+      "from": "bridge_review",
+      "to": "bridge_gap",
+      "action": "候选关系含证据缺口",
+      "evidence": "observed"
+    },
+    {
+      "from": "run_recovery",
+      "to": "canvas_proposal",
+      "action": "恢复成功 / 按原上下文重新生成",
+      "evidence": "observed"
     }
   ],
   "pending": [
@@ -677,16 +752,16 @@
       "reason": "本轮实测了 PDF 导入；其他格式共用同一导入入口，未逐一操作。"
     },
     {
-      "title": "画布模式运行的格式失败",
-      "reason": "后端 from_run 未剥离 ```json 围栏，实测 6 次画布运行中 3 次失败（界面保留问题与生成文本，可重发）；需后端修复后复测成功率。"
-    },
-    {
       "title": "带依赖的撤销提示",
       "reason": "dependent_changes 409 已接入提示；实测中先触发的是关系已修改与版本冲突，未单独构造“候选文稿被其他画布引用”的情形。"
     },
     {
       "title": "保存冲突（409）提示条",
       "reason": "需要两个客户端同时编辑同一文稿；冲突处理代码已接入，本轮未构造并发写入。"
+    },
+    {
+      "title": "从原输出恢复成功",
+      "reason": "验证库中剩余的失败运行均为内容错误，恢复接口正确拒绝；没有可恢复的围栏输出样本，恢复成功后打开提案的路径未实际触发。"
     }
   ],
   "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。"

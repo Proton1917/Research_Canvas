@@ -4,7 +4,7 @@ import type { Store } from '@editor/document';
 import {
   ChatWithAiIcon, CloseIcon, CommentIcon, EditIcon, ExpandFullIcon, ImportIcon, LinkIcon, NoteShadowDuotoneIcon, OpenInNewIcon, PlusIcon, ViewIcon,
 } from '@blocksuite/icons/rc';
-import type { Anchor } from '@research';
+import type { Anchor, ProposalEndpoint } from '@research';
 import { allSceneIds, projectScene, readSelection, regionBelow, type SceneCatalog, type SelectionTarget } from '@research/editor';
 import { Button, QuietDotsWave } from '@ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,6 +41,8 @@ type Gfx = {
   };
   selection: { selectedIds: string[]; slots: { updated: Subscribable }; set(selection: { elements: string[]; editing: boolean }): void };
   fitToScreen(options?: { smooth?: boolean; padding?: [number, number, number, number] }): void;
+  /** 编辑器块或绘制表面元素 */
+  getElementById(id: string): { xywh?: string } | null;
 };
 
 function xywhOf(model: { props: unknown }) {
@@ -75,6 +77,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const selection = useApp(state => state.canvasSelection);
   const sceneIds = useApp(state => state.sceneIds);
   const ask = useApp(state => (state.ask?.canvasId === canvasId ? state.ask : null));
+  const capabilities = useApp(state => state.capabilities);
   const bridge = useApp(state => state.bridge);
   const proposalOpen = useApp(state => !!state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId);
   const proposalId = useApp(state => (state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId ? state.proposalDraft.id : null));
@@ -289,7 +292,12 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const pairDocs = selectedCards.length === 2 ? selectedCards.map(id => cardDocument(id)).filter((id): id is string => !!id) : [];
   const selectedRelation = selection?.kind === 'relation' ? relations.find(item => item.id === selection.relationId) : undefined;
   const linkView = selection?.kind === 'link' ? session?.linkView(canvasId, selection.connectorId) ?? null : null;
-  const linkDocs = selection?.kind === 'link' ? session?.connectorDocuments(canvasId, selection.connectorId) ?? [null, null] : [null, null];
+  const linkEnds = selection?.kind === 'link' ? session?.connectorEndpoints(canvasId, selection.connectorId) ?? [null, null] : [null, null];
+  const typedEndpoints = !!capabilities?.relation_endpoints;
+  // 文稿卡片之间始终可建立关系；片段卡片与带文字的想法需要服务提供类型化端点
+  const linkRelatable = !!linkEnds[0] && !!linkEnds[1] && linkEnds[0].instance !== linkEnds[1].instance
+    && !(linkEnds[0].type === 'document' && linkEnds[1].type === 'document' && linkEnds[0].id === linkEnds[1].id)
+    && (typedEndpoints || (linkEnds[0].type === 'document' && linkEnds[1].type === 'document'));
   const detachedFrom = linkView?.detached_from ? relations.find(item => item.id === linkView.detached_from) : undefined;
 
   // 浮层位置：就近提问面板放在所选范围右侧，空间不足时放在左侧
@@ -309,15 +317,14 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     }
   }
 
-  // 文稿在本画布中的卡片或片段卡片范围，用于候选联系预览连线
-  const instanceBounds = (documentId: string) => {
+  // 候选联系端点在本画布中的范围：文稿卡片、锚点的片段卡片或场景实例
+  const endpointBounds = (endpoint: ProposalEndpoint) => {
     const s = getSession();
     if (!store || !s) return null;
-    const card = store.getModelsByFlavour(SYNCED).find(model => (model.props as unknown as { pageId: string }).pageId === documentId);
-    const fragment = card ? null : s.fragmentCards(canvasId).find(([id, item]) => item.document_id === documentId && store.getModelById(id));
-    const model = card ?? (fragment ? store.getModelById(fragment[0]) : null);
-    if (!model) return null;
-    const [x, y, width, height] = xywhOf(model);
+    const id = s.locateEndpoint(canvasId, endpoint);
+    const xywh = id ? gfxRef.current?.getElementById(id)?.xywh : undefined;
+    if (!xywh) return null;
+    const [x, y, width, height] = JSON.parse(xywh) as [number, number, number, number];
     return { x, y, width, height };
   };
 
@@ -326,7 +333,12 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     const view = gfxRef.current?.viewport;
     const draft = app.get().proposalDraft;
     if (!proposalId || !view || !draft) return;
-    const rects = draft.actions.flatMap(action => (action.type === 'create_document' || action.type === 'move_object' ? [action.bounds] : []));
+    // 候选框、移动目标，以及候选联系中已在画布上的端点（片段、想法、文稿卡片）
+    const rects = draft.actions.flatMap(action => {
+      if (action.type === 'create_document' || action.type === 'move_object') return [action.bounds];
+      if (action.type !== 'create_relation') return [];
+      return [action.source, action.target].flatMap(end => (end.type === 'created' ? [] : [endpointBounds(end)].filter((rect): rect is NonNullable<typeof rect> => !!rect)));
+    });
     if (rects.length === 0) return;
     const x = Math.min(...rects.map(rect => rect.x));
     const y = Math.min(...rects.map(rect => rect.y));
@@ -335,6 +347,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     // 右侧留出提案面板宽度
     const zoom = Math.min(1, (view.width - 480) / (right - x + 120), (view.height - 120) / (bottom - y + 120));
     view.setViewport(Math.max(0.1, zoom), [(x + right) / 2 + 200 / Math.max(0.1, zoom), (y + bottom) / 2], true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposalId]);
 
   const commitName = () => {
@@ -383,7 +396,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
           {selection?.kind === 'link' && (
             <>
               <Chip>{detachedFrom ? '已改接 · 原关系保留' : '纯视觉连线'}</Chip>
-              {linkDocs[0] && linkDocs[1] && linkDocs[0] !== linkDocs[1] && (
+              {linkRelatable && (
                 <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => void relateConnector(canvasId, selection.connectorId)}>研究这个联系</Button>
               )}
               {detachedFrom && <Button size="sm" variant="ghost" onClick={() => app.set({ selectedRelationId: detachedFrom.id, tab: 'relations', panelOpen: true })}>查看原关系</Button>}
@@ -436,7 +449,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
         {gfx && (ask || proposalOpen) && (
           <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
             {ask && <WriteRegion ask={ask} toView={toView} zoom={zoom} />}
-            {proposalOpen && <ProposalLayer canvasId={canvasId} toView={toView} zoom={zoom} instanceBounds={instanceBounds} />}
+            {proposalOpen && <ProposalLayer canvasId={canvasId} toView={toView} zoom={zoom} endpointBounds={endpointBounds} />}
             {ask && <CanvasAskPanel ask={ask} left={askPosition.left} top={askPosition.top} />}
             {proposalOpen && <ProposalPanel canvasId={canvasId} />}
           </div>

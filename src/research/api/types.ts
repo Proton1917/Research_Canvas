@@ -103,6 +103,8 @@ export type ClaimReview = {
 export type Claim = {
   status: ClaimStatus; conditions: string; counterexamples: string; sources: string[];
   mapping?: string; preserved_operations?: string[];
+  /** 尚缺论证与文献证据；下一步验证方法（旧记录为空字符串） */
+  missing_proof?: string; next_validation?: string;
   /** 服务端维护的版本、确认记录与待复核标记 */
   revision?: number; reviews?: ClaimReview[]; review_required?: boolean;
 };
@@ -114,11 +116,20 @@ export type ReviewRequest = {
   confirmed: true;
 };
 
+/** 研究关系的类型化端点：文稿、精确锚点或冻结场景中的自由想法。 */
+export type ResearchEndpoint =
+  | { type: 'document'; id: string }
+  | { type: 'anchor'; id: string }
+  | { type: 'canvas_object'; context_id: string; canvas_id: string; instance_id: string };
+
 export type Relation = {
   id: string;
   workspace_id: string;
+  /** 端点标识；含自由场景端点时为不透明字符串，内容类型按 source_ref / target_ref 解析 */
   source_id: string;
   target_id: string;
+  source_ref?: ResearchEndpoint | null;
+  target_ref?: ResearchEndpoint | null;
   kind: string;
   label: string;
   include_in_context: boolean;
@@ -128,6 +139,8 @@ export type Relation = {
 };
 
 export type RelationInput = Partial<Pick<Relation, 'source_id' | 'target_id' | 'kind' | 'label' | 'include_in_context' | 'context_order' | 'claim'>> & {
+  source_ref?: ResearchEndpoint;
+  target_ref?: ResearchEndpoint;
   /** 编辑已有研究关系时提交；存在人工确认记录时必填 */
   expected_claim_revision?: number;
 };
@@ -284,6 +297,9 @@ export type Capabilities = {
   scene_context?: number | boolean;
   frozen_inheritance?: boolean;
   canvas_proposals?: number | boolean;
+  canvas_proposal_recovery?: number | boolean;
+  claim_research_plan?: number | boolean;
+  relation_endpoints?: number | boolean;
   [key: string]: unknown;
 };
 
@@ -317,7 +333,13 @@ export type SceneContextRequest = {
   write_scope?: WriteScope;
 };
 
-export type ProposalEndpoint = { type: 'document'; id: string } | { type: 'created'; key: string };
+export type ProposalEndpoint =
+  | { type: 'document'; id: string }
+  | { type: 'created'; key: string }
+  /** 精确锚点：通过当前画布的片段卡片定位 */
+  | { type: 'anchor'; id: string }
+  /** 本次场景中的画布实例标识 */
+  | { type: 'scene'; object_id: string };
 
 export type CanvasAction =
   | { type: 'create_document'; key: string; title: string; text: string; kind: 'note' | 'discussion'; bounds: Bounds; source_numbers?: number[]; source_object_ids?: string[] }
@@ -325,7 +347,8 @@ export type CanvasAction =
   | { type: 'replace_excerpt'; anchor_id: string; expected_version: number; replacement: string }
   | {
     type: 'create_relation'; key: string; source: ProposalEndpoint; target: ProposalEndpoint; label: string;
-    mapping?: string; preserved_operations?: string[]; conditions?: string; counterexamples?: string; source_numbers?: number[];
+    mapping?: string; preserved_operations?: string[]; conditions?: string; counterexamples?: string;
+    missing_proof?: string; next_validation?: string; source_numbers?: number[];
   };
 
 export type CanvasProposalStatus = 'pending' | 'applied' | 'reverted' | 'rejected';

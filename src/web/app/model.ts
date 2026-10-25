@@ -3,10 +3,10 @@ import {
   api, ApiError, type Anchor, type AnchorResolution, type Canvas, type CanvasAction, type CanvasProposal, type CanvasProposalResult,
   type Capabilities, type Claim, type DocumentKind, type Health,
   type ModelCatalog, type Proposal, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
-  type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type Workspace, type WorkspaceSummary,
+  type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type Workspace, type WorkspaceSummary,
 } from '@research';
 import {
-  type LinkEvent, type PendingSave, ResearchSession, type SceneLayout, type SceneProjection, type SelectionTarget, setEditorColorScheme, setPrimaryMode,
+  type ConnectorEnd, type LinkEvent, type PendingSave, relationEndpoint, ResearchSession, type SceneLayout, type SceneProjection, type SelectionTarget, setEditorColorScheme, setPrimaryMode,
 } from '@research/editor';
 
 import { createStore, useStore } from '../lib/store';
@@ -443,6 +443,7 @@ function upsertRelation(relation: Relation) {
     session?.setRelations(relations);
     return { summary: { ...state.summary, relations } };
   });
+  void loadEndpointContexts([relation]);
 }
 
 // ------------------------------------------------------------------ 视图
@@ -866,6 +867,45 @@ export async function cancelRun(id: string) {
   }
 }
 
+function replaceRun(run: Run) {
+  app.set(state => ({ runs: state.runs.some(item => item.id === run.id) ? state.runs.map(item => (item.id === run.id ? run : item)) : [run, ...state.runs] }));
+}
+
+/**
+ * 失败的画布运行：由服务从保存的原输出重新解析提案。成功后刷新运行并打开提案；
+ * JSON 内容本身无效时返回具体错误，原输出与错误保持不变，可按原上下文重新生成。
+ */
+export async function recoverCanvasRun(id: string): Promise<string | null> {
+  try {
+    const run = await api.recoverCanvasProposal(id);
+    replaceRun(run);
+    if (!run.canvas_proposal_id) return '服务未返回画布提案';
+    await reopenCanvasProposal(run.canvas_proposal_id);
+    toast('已从原输出恢复画布提案，请审阅后确认写入。', 'success');
+    return null;
+  } catch (error) {
+    return errorText(error);
+  }
+}
+
+/** 使用失败运行的原 context_id 重新发起结构化运行；冻结的材料与写入范围不变。 */
+export async function regenerateRun(failed: Run) {
+  const workspaceId = app.get().workspaceId;
+  if (!workspaceId) return null;
+  try {
+    const run = await api.startRun(workspaceId, { context_id: failed.context_id, model: app.get().model || failed.model || undefined });
+    app.set(state => ({
+      runs: [run, ...state.runs.filter(item => item.id !== run.id)],
+      ask: state.ask?.runId === failed.id ? { ...state.ask, runId: run.id, busy: 'send', placed: null } : state.ask,
+    }));
+    watchRun(run.id);
+    return run;
+  } catch (error) {
+    reportError(error, '重新生成失败：');
+    return null;
+  }
+}
+
 export async function loadContext(id: string) {
   const cached = app.get().contexts[id];
   if (cached) return cached;
@@ -882,6 +922,7 @@ export async function loadContext(id: string) {
 /** 讨论文稿记录了生成时的上下文；载入后可显示其关联选段与来源。 */
 export async function loadDiscussionContexts() {
   const { summary, runs, contexts } = app.get();
+  void loadEndpointContexts(summary?.relations ?? []);
   const ids = new Set<string>();
   for (const doc of summary?.documents ?? []) if (doc.kind === 'discussion' && doc.metadata.context_id) ids.add(doc.metadata.context_id);
   for (const run of runs) if (run.proposal_id) ids.add(run.context_id);
@@ -1013,7 +1054,54 @@ export async function deleteRelation(id: string) {
   }
 }
 
-export const emptyClaim: Claim = { status: 'analogy', conditions: '', counterexamples: '', sources: [] };
+export const emptyClaim: Claim = { status: 'analogy', conditions: '', counterexamples: '', sources: [], missing_proof: '', next_validation: '' };
+
+/** 关系端点的显示信息：文稿、精确片段或冻结场景中的自由想法。 */
+export type EndpointInfo = {
+  type: ResearchEndpoint['type'];
+  title: string;
+  detail: string;
+  /** 可作为证据或材料的文稿与锚点；自由想法为 null */
+  documentId: string | null;
+  anchorId: string | null;
+  version: number | null;
+};
+
+export function endpointInfo(relation: Relation, side: 'source' | 'target', state: Pick<AppState, 'summary' | 'contexts'> = app.get()): EndpointInfo {
+  const ref = relationEndpoint(relation, side);
+  if (ref.type === 'document') {
+    const doc = state.summary?.documents.find(item => item.id === ref.id);
+    return { type: ref.type, title: doc?.title || (doc?.kind === 'note' ? '未命名想法' : '已删除的文稿'), detail: doc ? `文稿 · 版本 ${doc.current_version}` : '文稿', documentId: ref.id, anchorId: null, version: doc?.current_version ?? null };
+  }
+  if (ref.type === 'anchor') {
+    const anchor = state.summary?.anchors.find(item => item.id === ref.id);
+    const doc = anchor ? state.summary?.documents.find(item => item.id === anchor.document_id) : undefined;
+    return {
+      type: ref.type, title: anchor ? `「${anchor.quote.length > 40 ? `${anchor.quote.slice(0, 40)}…` : anchor.quote}」` : '片段',
+      detail: anchor ? `片段 · ${doc?.title ?? '文稿'} · 版本 ${anchor.version}${anchor.page != null ? ` · 第 ${anchor.page} 页` : ''}` : '片段',
+      documentId: anchor?.document_id ?? null, anchorId: ref.id, version: anchor?.version ?? null,
+    };
+  }
+  const scene = state.contexts[ref.context_id]?.scenes?.filter(item => item.canvas_id === ref.canvas_id).reverse()
+    .find(item => item.objects.some(object => object.id === ref.instance_id));
+  const object = scene?.objects.find(item => item.id === ref.instance_id);
+  const text = object ? (object.text || object.label) : '';
+  return {
+    type: ref.type, title: text ? `「${text.length > 40 ? `${text.slice(0, 40)}…` : text}」` : '画布想法',
+    detail: scene ? `画布想法 · 冻结于布局版本 ${scene.revision}` : '画布想法 · 冻结场景读取中', documentId: null, anchorId: null, version: null,
+  };
+}
+
+/** 读取关系中自由想法端点引用的冻结场景，供标题解析。 */
+async function loadEndpointContexts(relations: Relation[]) {
+  const ids = new Set<string>();
+  for (const relation of relations) for (const ref of [relation.source_ref, relation.target_ref]) if (ref?.type === 'canvas_object') ids.add(ref.context_id);
+  const missing = Array.from(ids).filter(id => !app.get().contexts[id]);
+  const loaded = await Promise.all(missing.map(id => api.getContext(id).catch(() => null)));
+  const patch: Record<string, ResearchContext> = {};
+  loaded.forEach(context => { if (context) patch[context.id] = context; });
+  if (Object.keys(patch).length) app.set(state => ({ contexts: { ...state.contexts, ...patch } }));
+}
 
 // ------------------------------------------------------------------ 画布就近提问
 export function openAsk(input: Pick<CanvasAsk, 'canvasId' | 'ids' | 'projection' | 'materials' | 'region' | 'anchor'>) {
@@ -1339,9 +1427,24 @@ function currentCanvasId() {
 export function showRelationOnCanvas(relationId: string) {
   const canvasId = currentCanvasId();
   if (!canvasId || !session) return;
-  session.showRelation(canvasId, relationId);
-  const placed = session.relationPlacement(relationId).find(item => item.canvasId === canvasId);
-  if (!placed?.views) toast('两端文稿卡片尚未都放在本画布，关系保持未放置；放入两端卡片后会显示连线。');
+  const relation = app.get().summary?.relations.find(item => item.id === relationId);
+  const result = session.showRelation(canvasId, relationId);
+  if (relation && result.views === 0) {
+    // 说明哪一端不在本画布：文稿需要卡片，片段需要片段卡片，想法需在其所属画布
+    const missing = (['source', 'target'] as const).filter((_, index) => !result.placed[index]).map(side => {
+      const info = endpointInfo(relation, side);
+      const ref = relationEndpoint(relation, side);
+      const where = ref.type === 'canvas_object' && ref.canvas_id !== canvasId
+        ? `属于画布「${app.get().summary?.canvases.find(canvas => canvas.id === ref.canvas_id)?.name ?? '其他画布'}」`
+        : ref.type === 'anchor' ? '尚无片段卡片在本画布' : ref.type === 'canvas_object' ? '已从本画布删除' : '尚无卡片在本画布';
+      return `${info.title}${where}`;
+    });
+    toast(missing.length
+      ? `关系保持未放置：${missing.join('；')}。放入后会显示连线。`
+      : '两端已在本画布，但未能生成连线。', 'info');
+  } else if (result.unhidden) {
+    toast('已在本画布显示该关系的连线。', 'success');
+  }
   app.set(state => ({ summary: state.summary ? { ...state.summary } : null }));
 }
 
@@ -1353,18 +1456,54 @@ export function hideRelationOnCanvas(relationId: string) {
   app.set(state => ({ summary: state.summary ? { ...state.summary } : null }));
 }
 
-/** 显式操作：为一条纯视觉或已改接的连线建立研究关系，并绑定到该视图。 */
+/**
+ * 显式操作：为一条纯视觉或已改接的连线建立研究关系，并绑定到该视图。
+ * 文稿卡片使用文稿端点，片段卡片使用精确锚点；自由想法先冻结两端与连线的场景，
+ * 再以 canvas_object 引用该场景中的实例。
+ */
 export async function relateConnector(canvasId: string, connectorId: string) {
-  const workspaceId = app.get().workspaceId;
-  if (!workspaceId || !session) return null;
-  const [sourceId, targetId] = session.connectorDocuments(canvasId, connectorId);
-  if (!sourceId || !targetId || sourceId === targetId) {
-    toast('研究关系的两端需要是两张不同的文稿卡片。片段卡片、自由框之间的关系需要后端扩展对象端点。', 'error');
+  const { workspaceId, capabilities } = app.get();
+  const s = session;
+  if (!workspaceId || !s) return null;
+  const [source, target] = s.connectorEndpoints(canvasId, connectorId);
+  if (!source || !target || source.instance === target.instance) {
+    toast('研究关系的两端需要是文稿卡片、片段卡片或带文字的想法（便笺、文字、形状）。', 'error');
+    return null;
+  }
+  const typed = source.type !== 'document' || target.type !== 'document';
+  if (typed && !capabilities?.relation_endpoints) {
+    toast('当前后端尚未提供片段与想法端点，关系的两端需要是文稿卡片。', 'error');
+    return null;
+  }
+  if (source.type === 'document' && target.type === 'document' && source.id === target.id) {
+    toast('两端是同一篇文稿的卡片；如需研究其中两处内容，请先放置片段卡片。', 'error');
     return null;
   }
   try {
-    const relation = await api.createRelation(workspaceId, { source_id: sourceId, target_id: targetId, kind: '关联', label: '' });
-    session.bindConnector(canvasId, connectorId, relation.id);
+    let contextId: string | null = null;
+    if (source.type === 'free' || target.type === 'free') {
+      // 自由想法没有内容标识：冻结两端与连线的场景，关系引用该快照中的实例
+      await s.flushCanvas(canvasId);
+      const fresh = canvasActions?.canvasId === canvasId ? canvasActions.reproject([source.instance, target.instance, connectorId]) : null;
+      if (!fresh) throw new Error('请回到该画布后再建立关系');
+      const context = await api.createSceneContext(workspaceId, {
+        question: '建立研究关系：记录两端对象及连线的冻结场景',
+        mode: 'relation',
+        projection: fresh.projection,
+        materials: fresh.materials,
+        write_scope: { allow_create: false, object_ids: [], bounds: null },
+      });
+      app.set(state => ({ contexts: { ...state.contexts, [context.id]: context } }));
+      contextId = context.id;
+    }
+    const ref = (end: ConnectorEnd): ResearchEndpoint => end.type === 'free'
+      ? { type: 'canvas_object', context_id: contextId!, canvas_id: canvasId, instance_id: end.instance }
+      : { type: end.type, id: end.id };
+    const relation = await api.createRelation(workspaceId, typed
+      ? { source_ref: ref(source), target_ref: ref(target), kind: '关联', label: '' }
+      : { source_id: source.id, target_id: target.id, kind: '关联', label: '' });
+    if (contextId) toast('已冻结两端想法的场景并建立候选关系，想法内容按建立时的文字记录。', 'success', { label: '查看场景', run: () => setDialogs({ contextId }) });
+    s.bindConnector(canvasId, connectorId, relation.id);
     upsertRelation(relation);
     setCanvasSelection({ kind: 'relation', relationId: relation.id, connectorId });
     openBridge(relation.id, canvasId);

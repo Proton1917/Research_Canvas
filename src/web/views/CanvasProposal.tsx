@@ -73,8 +73,8 @@ function CandidateBox({ action, excluded, toView, zoom }: { action: Extract<Canv
 }
 
 /** 候选内容预览层：放在画布视口坐标系中，随缩放与平移更新。 */
-export function ProposalLayer({ canvasId, toView, zoom, instanceBounds }: {
-  canvasId: string; toView: ToView; zoom: number; instanceBounds: (documentId: string) => Bounds | null;
+export function ProposalLayer({ canvasId, toView, zoom, endpointBounds }: {
+  canvasId: string; toView: ToView; zoom: number; endpointBounds: (endpoint: ProposalEndpoint) => Bounds | null;
 }) {
   const draft = useApp(state => state.proposalDraft);
   const proposal = useApp(state => (draft ? state.canvasProposals[draft.id] : undefined));
@@ -83,7 +83,7 @@ export function ProposalLayer({ canvasId, toView, zoom, instanceBounds }: {
   const [regionLeft, regionTop] = region ? toView(region.x, region.y) : [0, 0];
   const created = new Map(draft.actions.filter((action): action is Extract<CanvasAction, { type: 'create_document' }> => action.type === 'create_document').map(action => [action.key, action]));
   const center = (end: ProposalEndpoint): [number, number] | null => {
-    const bounds = end.type === 'created' ? created.get(end.key)?.bounds ?? null : instanceBounds(end.id);
+    const bounds = end.type === 'created' ? created.get(end.key)?.bounds ?? null : endpointBounds(end);
     if (!bounds) return null;
     return toView(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   };
@@ -121,7 +121,38 @@ export function ProposalLayer({ canvasId, toView, zoom, instanceBounds }: {
   );
 }
 
-function ActionRow({ action, excluded, sourceTitle }: { action: CanvasAction; excluded: boolean; sourceTitle: (number: number) => string }) {
+/** 候选联系端点的名称：文稿标题、片段原文、场景实例的文字或新建框标题。 */
+function useEndpointLabel(proposalId: string) {
+  const draft = useApp(state => state.proposalDraft);
+  const proposal = useApp(state => state.canvasProposals[proposalId]);
+  const summary = useApp(state => state.summary);
+  const scene = useApp(state => (proposal ? state.contexts[proposal.context_id]?.scenes?.at(-1) : undefined));
+  return (end: ProposalEndpoint) => {
+    switch (end.type) {
+      case 'created': {
+        const action = draft?.actions.find(item => item.type === 'create_document' && item.key === end.key);
+        return `新建框「${action && action.type === 'create_document' ? action.title : end.key}」`;
+      }
+      case 'document': {
+        const doc = summary?.documents.find(item => item.id === end.id);
+        return `文稿「${doc?.title || '未命名'}」`;
+      }
+      case 'anchor': {
+        const anchor = summary?.anchors.find(item => item.id === end.id);
+        return anchor ? `片段「${anchor.quote.slice(0, 30)}${anchor.quote.length > 30 ? '…' : ''}」v${anchor.version}` : '片段';
+      }
+      case 'scene': {
+        const object = scene?.objects.find(item => item.id === end.object_id);
+        const text = object?.text || object?.label || '';
+        return `画布想法「${text.slice(0, 30)}${text.length > 30 ? '…' : ''}」`;
+      }
+      default:
+        return '端点';
+    }
+  };
+}
+
+function ActionRow({ action, excluded, sourceTitle, endpointLabel }: { action: CanvasAction; excluded: boolean; sourceTitle: (number: number) => string; endpointLabel: (end: ProposalEndpoint) => string }) {
   const key = actionKey(action);
   const sources = 'source_numbers' in action && action.source_numbers?.length ? action.source_numbers.map(number => `[来源${number}] ${sourceTitle(number)}`).join('；') : '';
   return (
@@ -135,10 +166,13 @@ function ActionRow({ action, excluded, sourceTitle }: { action: CanvasAction; ex
           {action.type === 'create_relation' && (
             <>
               <Chip tone="warn">候选联系</Chip> <span className="font-medium text-ink">{action.label}</span>
+              <span className="mt-1 block text-ink-secondary">{endpointLabel(action.source)} → {endpointLabel(action.target)}</span>
               {action.mapping && <span className="mt-1 block text-ink-secondary">对应：{action.mapping}</span>}
               {!!action.preserved_operations?.length && <span className="block text-ink-secondary">保持的运算：{action.preserved_operations.join('、')}</span>}
               {action.conditions && <span className="block text-ink-secondary">条件：{action.conditions}</span>}
               {action.counterexamples && <span className="block text-ink-secondary">反例：{action.counterexamples}</span>}
+              {action.missing_proof && <span className="mt-1 block rounded bg-amber-500/10 px-1.5 py-1 text-ink-secondary" data-testid="proposal-gap"><b className="text-[var(--rc-warn)]">证据缺口：</b>{action.missing_proof}</span>}
+              {action.next_validation && <span className="block text-ink-secondary">下一步验证：{action.next_validation}</span>}
             </>
           )}
           {sources && <span className="mt-1 block text-[11px] text-ink-muted">{sources}</span>}
@@ -153,6 +187,7 @@ export function ProposalPanel({ canvasId }: { canvasId: string }) {
   const draft = useApp(state => state.proposalDraft);
   const proposal = useApp(state => (draft ? state.canvasProposals[draft.id] : undefined));
   const context = useApp(state => (proposal ? state.contexts[proposal.context_id] : undefined));
+  const endpointLabel = useEndpointLabel(draft?.id ?? '');
   if (!draft || !proposal || proposal.canvas_id !== canvasId) return null;
   const sourceTitle = (number: number) => context?.sources.find(source => source.number === number)?.title || '想法';
   const dependency = proposalDependencyErrors(draft);
@@ -170,7 +205,7 @@ export function ProposalPanel({ canvasId }: { canvasId: string }) {
       <div className="rc-scroll min-h-0 flex-1 space-y-2.5 overflow-auto px-3 py-2.5">
         {proposal.answer && <div className="rc-prose max-h-40 overflow-auto rounded-lg bg-[var(--cds-alpha-1)] p-2.5 text-[12.5px] text-ink"><Markdown text={proposal.answer} /></div>}
         <p className="text-[11px] text-ink-muted">科学联系以“候选”状态写入；状态升级需在学科桥中附证据人工确认。</p>
-        <ul className="space-y-1.5">{draft.actions.map(action => <ActionRow key={actionKey(action)} action={action} excluded={draft.excluded.includes(actionKey(action))} sourceTitle={sourceTitle} />)}</ul>
+        <ul className="space-y-1.5">{draft.actions.map(action => <ActionRow key={actionKey(action)} action={action} excluded={draft.excluded.includes(actionKey(action))} sourceTitle={sourceTitle} endpointLabel={endpointLabel} />)}</ul>
         {dependency.map(item => <p key={item} className="text-xs text-[var(--rc-bad)]">{item}</p>)}
         {draft.unplaced.length > 0 && <p className="text-[11px] text-[var(--rc-warn)]">{draft.unplaced.length} 条候选联系的端点不在本画布，关系已保存但未画线；放入两端卡片后可在关系面板显示。</p>}
         {draft.conflict && pending && (

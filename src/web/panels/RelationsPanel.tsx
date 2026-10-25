@@ -4,12 +4,13 @@ import { Button, SegmentedControl } from '@ui';
 import { useEffect, useMemo, useState } from 'react';
 
 import {
-  app, createRelation, deleteRelation, emptyClaim, hideRelationOnCanvas, openBridge, openDocument, setDialogs, showRelationOnCanvas,
+  app, createRelation, deleteRelation, emptyClaim, endpointInfo, hideRelationOnCanvas, openBridge, openDocument, setDialogs, showRelationOnCanvas,
   updateComposer, updateRelation, useApp,
 } from '../app/model';
 import { useSession } from '../app/useSession';
 import { AnchorStatusChip, Chip, EmptyState, KindIcon, SectionTitle } from '../components/common';
 import { CLAIM_STATUS_LABEL, excerpt } from '../lib/format';
+import { Endpoint } from '../views/BridgeCard';
 
 /** 面板内可直接设置的状态；有支持、已确立、被反驳需在学科桥中附证据人工确认。 */
 const STATUSES: { id: ClaimStatus; label: string }[] = [
@@ -108,7 +109,13 @@ function RelationEditor({ relation }: { relation: Relation }) {
   useEffect(() => { setDraft(toDraft(relation)); setError(null); setConfirmDelete(false); }, [relation]);
 
   const dirty = JSON.stringify(toDraft(relation)) !== JSON.stringify(draft);
-  const relatedAnchors = anchors.filter(anchor => anchor.document_id === draft.source_id || anchor.document_id === draft.target_id);
+  // 片段与想法端点不可在此改为文稿；端点文稿用于出处候选和 AI 分析材料
+  const source = useApp(state => endpointInfo(relation, 'source', state));
+  const target = useApp(state => endpointInfo(relation, 'target', state));
+  const typed = source.type !== 'document' || target.type !== 'document';
+  const endpointDocs = typed ? [source.documentId, target.documentId].filter((id): id is string => !!id) : [draft.source_id, draft.target_id];
+  const endpointAnchors = [source.anchorId, target.anchorId].filter((id): id is string => !!id);
+  const relatedAnchors = anchors.filter(anchor => endpointDocs.includes(anchor.document_id) || endpointAnchors.includes(anchor.id));
   const patchClaim = (patch: Partial<Claim>) => setDraft(current => ({ ...current, claimEnabled: true, claim: { ...current.claim, ...patch } }));
   const addSource = (value: string) => {
     const trimmed = value.trim();
@@ -120,8 +127,7 @@ function RelationEditor({ relation }: { relation: Relation }) {
     setSaving(true);
     setError(null);
     const result = await updateRelation(relation.id, {
-      source_id: draft.source_id,
-      target_id: draft.target_id,
+      ...(typed ? {} : { source_id: draft.source_id, target_id: draft.target_id }),
       kind: draft.kind.trim() || '关联',
       label: draft.label,
       include_in_context: draft.include_in_context,
@@ -140,6 +146,13 @@ function RelationEditor({ relation }: { relation: Relation }) {
       <Placement relation={relation} />
       <div className="space-y-1.5">
         <label className="text-[11px] font-medium text-ink-muted">对应对象</label>
+        {typed ? (
+          <div className="flex items-center gap-1.5">
+            <Endpoint relation={relation} side="source" />
+            <ArrowRightSmallIcon width={18} height={18} className="shrink-0 text-ink-muted" aria-hidden="true" />
+            <Endpoint relation={relation} side="target" />
+          </div>
+        ) : (<>
         <div className="flex items-center gap-1.5">
           <select aria-label="起点文稿" className="rc-input min-w-0 flex-1 text-xs" value={draft.source_id} onChange={event => setDraft({ ...draft, source_id: event.target.value })}>
             {documents.map(doc => <option key={doc.id} value={doc.id}>{doc.title || '未命名'}</option>)}
@@ -157,6 +170,7 @@ function RelationEditor({ relation }: { relation: Relation }) {
             </button>
           ))}
         </div>
+        </>)}
         <textarea
           aria-label="具体对应"
           rows={2}
@@ -221,7 +235,10 @@ function RelationEditor({ relation }: { relation: Relation }) {
       <div className="flex flex-wrap items-center gap-1.5">
         <Button size="sm" variant="primary" disabled={!dirty} isLoading={saving} onClick={() => void save()}>保存关系</Button>
         <Button size="sm" variant="ghost" onClick={() => {
-          updateComposer({ mode: 'relation', documentIds: [draft.source_id, draft.target_id], anchorIds: draft.claim.sources.filter(item => item.startsWith('anchor:')).map(item => item.slice(7)), preview: null, previewKey: null });
+          // 片段端点按精确选段读取；文稿端点读取整篇
+          const anchorIds = Array.from(new Set([...endpointAnchors, ...draft.claim.sources.filter(item => item.startsWith('anchor:')).map(item => item.slice(7))]));
+          const documentIds = [source, target].filter(item => item.type === 'document' && item.documentId).map(item => item.documentId!);
+          updateComposer({ mode: 'relation', documentIds, anchorIds, preview: null, previewKey: null });
           app.set({ tab: 'discuss', panelOpen: true });
         }}>用 AI 分析此关系</Button>
         <Button size="sm" variant="secondary" onClick={() => openBridge(relation.id, canvasId)}>研究这个联系</Button>
@@ -248,7 +265,9 @@ export function RelationsPanel() {
   const [newSource, setNewSource] = useState('');
   const [newTarget, setNewTarget] = useState('');
   const selected = relations.find(relation => relation.id === selectedId);
-  const title = (id: string) => documents.find(doc => doc.id === id)?.title ?? '已删除文稿';
+  const contexts = useApp(state => state.contexts);
+  const summaryState = useApp(state => state.summary);
+  const title = (relation: Relation, side: 'source' | 'target') => endpointInfo(relation, side, { summary: summaryState, contexts }).title;
   const list = useMemo(() => relations.filter(relation => showContext || relation.kind !== 'context'), [relations, showContext]);
   const contextCount = relations.length - relations.filter(relation => relation.kind !== 'context').length;
 
@@ -285,14 +304,17 @@ export function RelationsPanel() {
                   className={`rc-focus-ring w-full rounded-lg px-2.5 py-2 text-left hover:bg-[var(--cds-fill-ghost-hover)] ${relation.id === selectedId ? 'bg-clay/8' : ''}`}
                 >
                   <p className="flex items-center gap-1 text-[13px] text-ink">
-                    <span className="min-w-0 max-w-[48%] shrink-0 truncate">{title(relation.source_id)}</span>
+                    <span className="min-w-0 max-w-[48%] shrink-0 truncate">{title(relation, 'source')}</span>
                     <ArrowRightSmallIcon width={16} height={16} className="shrink-0 text-ink-muted" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">{title(relation.target_id)}</span>
+                    <span className="min-w-0 flex-1 truncate">{title(relation, 'target')}</span>
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink-muted">
                     <Chip tone={relation.kind === 'context' ? 'muted' : 'clay'}>{relation.kind === 'context' ? '讨论来源' : relation.kind}</Chip>
                     {relation.claim && <Chip tone={['verified', 'established', 'supported'].includes(relation.claim.status) ? 'ok' : relation.claim.status === 'refuted' ? 'bad' : relation.claim.status === 'candidate' ? 'warn' : 'muted'}>{CLAIM_STATUS_LABEL[relation.claim.status]}</Chip>}
                     {relation.claim?.review_required && <Chip tone="warn">待复核</Chip>}
+                    {relation.claim?.missing_proof?.trim() && <Chip tone="warn">证据缺口</Chip>}
+                    {(relation.source_ref?.type ?? 'document') !== 'document' && <Chip>{relation.source_ref?.type === 'anchor' ? '片段' : '想法'}端点</Chip>}
+                    {(relation.target_ref?.type ?? 'document') !== 'document' && relation.target_ref?.type !== relation.source_ref?.type && <Chip>{relation.target_ref?.type === 'anchor' ? '片段' : '想法'}端点</Chip>}
                     {relation.claim && relation.claim.sources.length > 0 && <span>{relation.claim.sources.length} 条出处</span>}
                     {relation.label && <span className="truncate">{excerpt(relation.label, 40)}</span>}
                   </p>
