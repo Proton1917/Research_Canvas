@@ -118,7 +118,7 @@ def verify(path, platform):
                 assert capabilities["canvas_proposals"] == 2 and capabilities["relation_endpoints"] == 1
                 workspace = http(base, "POST", "/api/workspaces", {"name": "Research Canvas 安装验证"}, expected=201)
                 imported = import_file(base, workspace["id"], bundle / "INSTALL.md", "text/markdown")
-                assert imported["document"]["content"]["blocks"][0]["text"] == (bundle / "INSTALL.md").read_text(encoding="utf-8")
+                assert imported["document"]["content"]["blocks"][0]["text"] == (bundle / "INSTALL.md").read_bytes().decode("utf-8")
                 pdf = import_file(base, workspace["id"], ROOT / "docs/Research_Canvas_conversation_2026-10-25.pdf", "application/pdf")
                 assert len(pdf["document"]["content"]["blocks"]) == 7
                 assert "Research Canvas" in "\n".join(block["text"] for block in pdf["document"]["content"]["blocks"])
