@@ -6,6 +6,8 @@
 
 `GET /capabilities` 提供 `scene_context`、`frozen_inheritance`、`canvas_proposals`、`canvas_proposal_recovery`、`claim_reviews`、`claim_research_plan`、`relation_endpoints`。值为正整数或 `true` 时可使用对应能力。`canvas_proposals=2` 支持结构化工具输出与片段、场景端点。未知 API 返回 JSON 404。
 
+`canvas_proposal_materialization=1` 表示后端根据操作生成完整画布状态；`context_freshness=1` 表示发送前核对本轮材料版本；`optional_canvas_actions=1` 支持纯回答及可选操作数组。`visual_inputs=1` 提供图片输入接口，`vision_models` 列出支持视觉的已配置模型。`max_input_characters` 与 `max_input_image_bytes` 分别表示本机配置的文本字符上限和图像字节上限，null 表示采用上游服务限制。
+
 画布讨论先保存本地修改，再从已保存的编辑状态提取场景与材料清单，调用 `POST /workspaces/{id}/scene-contexts`。预览展示响应中的 `sources`、`scenes`、`messages`。发送调用原有 `POST /workspaces/{id}/runs`，引用该 `context_id`。材料、版本、选择、问题或写入区域变化后重新生成预览。
 
 ## 接收现有前端场景投影
@@ -18,6 +20,7 @@ type SceneContextRequest = {
   mode: 'discussion' | 'relation' | 'canvas';
   projection: SceneProjection;
   materials: Material[];
+  visuals?: {asset_id: string; object_ids: string[]}[];
   write_scope?: {
     allow_create: boolean;
     object_ids: string[];
@@ -32,13 +35,13 @@ type SceneContextRequest = {
 
 `write_scope.allow_create` 允许创建文稿及候选关系，`object_ids` 指定允许移动或改写的实例。将前端 `region` 转成 `bounds` 时传入矩形的四个字段，旋转值继续保存在场景布局中。
 
-接口也接受独立客户端使用的规范化请求：`{question,mode,canvas_id,expected_revision,objects,write_scope,document_ids?,anchor_ids?,inherit_context_ids?,frozen_sources?,inherit_discussion_sources?,viewport?,entry?}`。其 `objects` 使用上述冻结对象字段；`read_scope` 可为 `reference`、`excerpt`、`full`、`inline`。`excerpt` 需要 `anchor_id`，`full` 需要 `document_id`，`inline` 用于编辑器自由内容。全文可附显式 `version`。规范化请求默认继承选入讨论的来源，逐项材料投影按用户的勾选读取。
+接口也接受独立客户端使用的规范化请求：`{question,mode,canvas_id,expected_revision,objects,write_scope,document_ids?,anchor_ids?,inherit_context_ids?,frozen_sources?,inherit_discussion_sources?,viewport?,entry?,visuals?}`。其 `objects` 使用上述冻结对象字段；`read_scope` 可为 `reference`、`excerpt`、`full`、`inline`。`excerpt` 需要 `anchor_id`，`full` 需要 `document_id`，`inline` 用于编辑器自由内容。全文附带的 `version` 对应当前文稿版本，历史全文通过 `frozen_sources` 选择。规范化请求默认继承选入讨论的来源，逐项材料投影按用户的勾选读取。
 
 ## 画布提案与编辑器状态
 
-`mode=canvas` 通过 `submit_canvas` 工具提交结构化操作，运行返回 `canvas_proposal_id`。流式阶段的 `run.answer` 是工具参数 JSON 草稿，应按生成进度展示；运行成功后的 `run.answer` 为分析正文。此时通过 `GET /canvas-proposals/{id}` 读取完整操作。
+`mode=discussion` 返回可编辑的讨论文稿 `document_id`。`mode=canvas` 通过 `submit_canvas` 提交回答及可选操作：带操作的运行返回 `canvas_proposal_id`，纯回答返回讨论文稿 `document_id`。流式阶段的 `run.answer` 是工具参数 JSON 草稿；运行成功后的 `run.answer` 为分析正文。提案通过 `GET /canvas-proposals/{id}` 读取。
 
-工具参数按 `create_documents`、`move_objects`、`replace_excerpts`、`create_relations` 四个数组提交，使用严格 JSON Schema。后端将工具参数转换为下述统一 `actions` 格式。流式草稿中的 `answer`、`title`、`label` 字段保留原名，完成后的提案接口使用统一操作类型。
+工具参数要求 `answer`，四个操作数组均可省略。候选关系提供 `key`、`source_kind`、`source_id`、`target_kind`、`target_id` 和 `label`；结构映射、保持运算、条件、反例、证明缺口、验证方法及来源编号按需填写。后端使用类型派生的 JSON Schema 声明字段，并转换为下述统一 `actions` 格式。
 
 Markdown 公式使用普通 LaTeX 字符串。工具声明与提示词要求命令保留单个反斜杠，矩阵换行保留两个反斜杠。生成完成后，后端通过 Markdown 解析器定位公式；对反斜杠一致重复转义且修正后能通过 LaTeX 解析的片段执行归一化。代码块、行内代码、正文中的字面反斜杠和正常公式保留原文。前端继续按 Markdown 和 LaTeX 渲染返回内容。
 
@@ -75,21 +78,37 @@ type CanvasProposal = {
 
 预览和隔离编辑副本的连线定位应处理全部端点类型。`scene.object_id` 可直接定位编辑器实例；`anchor.id` 通过当前画布的 `fragments` 查找实例；文稿通过卡片引用定位。关系的语义端点与 `link_views` 的视觉端点分别保存。
 
-前端在隔离的编辑副本中按操作创建或移动对象，生成应用后的完整 `editor_state`。既有画布包含 Yjs 状态时，应用请求必须附带该状态；自由对象、分组、连线和隐藏记录都保留在这个完整状态中。后端检查状态格式、范围、引用和版本，并在一次 SQLite 事务中保存正式文稿、关系与画布状态。Yjs 的生成、对象绑定和正文投影由前端编辑适配层负责。
+前端根据操作绘制候选预览，确认时提交提案版本和画布版本。后端使用 `yrs` 载入已保存的 Yjs，直接创建卡片、移动目标及建立候选关系连线，再从同一编辑状态生成 `Canvas.objects`。自由对象、文字格式、片段和既有连线均随原状态保留。文稿、关系、Yjs 和对象表在一次 SQLite 事务中提交。
 
-后端创建关系时返回关系标识，前端按 `id_map` 在预览副本中生成相应连线并写入 `link_views`。源文稿引用沿用已有 CanvasObject，新增文稿实例按提案标识放置。编辑器状态原本为空的纯文稿卡片画布可以省略 `editor_state`，沿用现有按 `Canvas.objects` 重建的行为。
+新增关系的连线标识为 `${relation_id}:view`，对应绑定由后端写入 `link_views` 和兼容字段 `links`。端点位于其他画布时，关系保持待放置状态。空画布在首次应用时建立页面和绘制表面。应用请求中的旧 `editor_state` 字段作为兼容输入接收，最终编辑状态由后端生成。
 
 | 方法与路径 | 请求与结果 |
 | --- | --- |
 | `GET /canvas-proposals/{id}` | 返回提案、稳定标识和状态 |
 | `PATCH /canvas-proposals/{id}` | `{expected_revision,actions,expected_canvas_revision?}`；校验完整操作集合及其引用，返回递增 revision 的提案 |
-| `POST /canvas-proposals/{id}/apply` | `{expected_revision,expected_canvas_revision,editor_state?}`；原子应用，返回提案、事务、画布、文稿和关系 |
+| `POST /canvas-proposals/{id}/apply` | `{expected_revision,expected_canvas_revision}`；原子应用，返回提案、事务、画布、文稿和关系 |
 | `POST /canvas-proposals/{id}/revert` | `{expected_revision,expected_canvas_revision}`；撤销该事务，返回恢复后的状态与移除标识 |
 | `POST /canvas-proposals/{id}/reject` | `{expected_revision}`；保存拒绝状态 |
 
 应用和撤销响应为 `{proposal,transaction_id,canvas,documents,relations,removed_document_ids,removed_relation_ids}`。应用成功后采用返回的服务端版本，更新编辑会话并恢复自动保存。同一提案的重复应用返回原事务结果。重新读取应用结果时，前端还应保留当前会话中比响应更新的版本。
 
 旧画布版本提交返回 409。用户审阅布局变化后，可以用 PATCH 的 `expected_canvas_revision` 确认当前目标版本，调整已有操作并再次应用；模型输出和冻结阅读来源继续保留。改写仍检查实际文稿版本。整组撤销要求相关对象保持应用后的版本；新建文稿若已有后续引用，返回 `dependent_changes`，保留现状。
+
+## 发送前的材料版本
+
+新建上下文返回 `freshness: {documents: Record<string, number>, canvases: Record<string, number>}`，记录本轮直接选择材料时的文稿版本及画布版本。显式继承的历史来源继续采用原快照。历史上下文的 `freshness` 可为 null。
+
+`GET /contexts/{id}/freshness` 返回 `{context_id,tracked,fresh,changes}`。文稿变化项包含 `{type:'document',id,expected_version,current_version}`，画布变化项包含 `{type:'canvas',id,expected_revision,current_revision}`。运行创建遇到版本变化时返回 409 `stale_context`，详情使用同一结构。
+
+前端发送前保存相关文稿和画布，依据最新状态重新投影并冻结上下文，再使用返回的 `context_id` 发起运行。远端并发修改造成 `stale_context` 时，保留问题、选区和材料勾选，刷新预览。历史讨论继续通过 `inherit_context_ids` 或 `frozen_sources` 读取。
+
+预览的 `character_count` 是模型文本消息的 Unicode 字符数，界面按字符显示。发送时超过配置上限返回 422 `context_budget_exceeded`，附总字符数、上限及各来源字符数，由用户缩小范围。模型的原生 token 用量保存于运行的 `usage`。
+
+## 选中图像
+
+图片或局部画布截图经工作区导入接口保存为资产。场景请求附 `visuals:[{asset_id,object_ids}]`，`object_ids` 指向本轮明确选入的场景对象。支持 PNG、JPEG、WebP、GIF，几何、文字和来源仍使用场景字段。上下文保存资产引用，分支继承和归档恢复一并保留。
+
+后端将资产内容转换为模型协议的图像输入：Anthropic Messages 使用 Base64 image block，Chat Completions 使用 data URL image_url。图像前的文字说明列出资产及对应对象标识。文字模式配置遇到图像输入时返回 `vision_unsupported`，界面提供模型选择和材料调整。图像总字节超过配置上限时返回 `image_budget_exceeded`。
 
 ## 研究关系和人工确认
 

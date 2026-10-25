@@ -14,6 +14,7 @@ pub struct ProjectionInput {
     pub projection: Projection,
     pub materials: Vec<Material>,
     #[serde(default)] pub write_scope: WriteScope,
+    #[serde(default)] pub visuals: Vec<crate::visual::VisualInput>,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +144,6 @@ impl ProjectionInput {
             }
             objects.push(object);
         }
-        Ok(SceneContextInput { question: self.question, mode: self.mode, canvas_id: self.projection.canvas_id, expected_revision: self.projection.canvas_revision, objects, document_ids: vec![], anchor_ids, inherit_context_ids: vec![], write_scope: self.write_scope, viewport: Some(self.projection.viewport), entry: Some(self.projection.entry), frozen_sources, inherit_discussion_sources: false })
+        Ok(SceneContextInput { question: self.question, mode: self.mode, canvas_id: self.projection.canvas_id, expected_revision: self.projection.canvas_revision, objects, document_ids: vec![], anchor_ids, inherit_context_ids: vec![], write_scope: self.write_scope, viewport: Some(self.projection.viewport), entry: Some(self.projection.entry), frozen_sources, inherit_discussion_sources: false, visuals: self.visuals })
     }
 }

@@ -153,13 +153,15 @@ pub async fn update_canvas(State(state): State<AppState>, Path(id): Path<String>
         if canvas.revision != input.expected_revision { return Err(ApiError::conflict(canvas.revision)); }
         let mut object_ids = HashSet::new();
         let mut document_ids = HashSet::new();
-        for object in &input.objects {
+        let objects = match &input.editor_state { Some(editor_state) => crate::canvas_state::project(editor_state)?, None => input.objects };
+        for object in &objects {
             if object.id.is_empty() || !object_ids.insert(&object.id) { return Err(ApiError::invalid("画布对象标识需要唯一且非空")); }
             if object.width < 0.0 || object.height < 0.0 { return Err(ApiError::invalid("画布对象尺寸应为非负数")); }
             if document_ids.insert(&object.document_id) { db::scoped_document(&transaction, &object.document_id, &canvas.workspace_id)?; }
         }
         canvas.name = input.name;
-        canvas.objects = input.objects;
+        canvas.objects = objects;
+        if canvas.editor_state.is_some() && input.editor_state.is_none() { return Err(ApiError::invalid("当前画布需要完整 editor_state，以保留自由对象和连线")); }
         canvas.editor_state = input.editor_state;
         canvas.revision += 1;
         canvas.updated_at = now();

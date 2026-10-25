@@ -1,6 +1,7 @@
 mod api;
 mod canvas_proposal;
 mod canvas_output;
+mod canvas_state;
 mod claim;
 mod config;
 mod context;
@@ -14,6 +15,7 @@ mod research;
 mod scene;
 mod scene_projection;
 mod transfer;
+mod visual;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
@@ -90,6 +92,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/workspaces/{id}/contexts", post(api::create_context))
         .route("/workspaces/{id}/scene-contexts", post(scene::create_context))
         .route("/contexts/{id}", get(api::get_context))
+        .route("/contexts/{id}/freshness", get(context::read_freshness))
         .route("/workspaces/{id}/runs", get(api::list_runs).post(provider::start_run))
         .route("/runs/{id}", get(api::get_run))
         .route("/runs/{id}/events", get(api::run_events))

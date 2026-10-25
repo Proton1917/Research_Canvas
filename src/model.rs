@@ -249,6 +249,10 @@ pub struct Context {
     pub scenes: Vec<crate::scene::SceneSnapshot>,
     pub messages: Vec<Message>,
     pub character_count: usize,
+    #[serde(default)]
+    pub freshness: Option<crate::context::Freshness>,
+    #[serde(default)]
+    pub visuals: Vec<crate::visual::VisualInput>,
     pub created_at: String,
 }
 

@@ -71,21 +71,27 @@ pub async fn start_run(State(state): State<AppState>, Path(workspace_id): Path<S
     let model = input.model.unwrap_or_else(|| state.config.provider.default_model.clone());
     if !state.config.provider.allowed_models.contains(&model) { return Err(ApiError::invalid("该模型未包含在当前允许的模型列表中")); }
     let max_tokens = input.max_output_tokens.unwrap_or(state.config.provider.max_output_tokens);
+    let input_limit = state.config.provider.max_input_characters;
+    let provider = state.config.provider.clone();
     if max_tokens == 0 || max_tokens > state.config.provider.max_output_tokens { return Err(ApiError::invalid("输出长度超出后端配置范围")); }
-    let (context, run) = state.db.call(move |connection| {
+    let (context, run, assets) = state.db.call(move |connection| {
         let context = db::context(connection, &input.context_id)?;
         if context.workspace_id != workspace_id { return Err(ApiError::invalid("上下文属于其他工作区")); }
+        crate::context::require_fresh(connection, &context)?;
+        crate::context::check_budget(&context, input_limit)?;
+        if !context.visuals.is_empty() && !provider.vision_models.contains(&model) { return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "vision_unsupported", "所选模型配置为文字输入，请选择支持视觉的模型或移除图像材料")); }
+        let assets = crate::visual::load(connection, &context, &provider)?;
         let timestamp = now();
         let run = Run { id: id(), workspace_id, context_id: context.id.clone(), model, status: RunStatus::Queued, answer: String::new(), model_used: None, usage: None, error: None, document_id: None, proposal_id: None, canvas_proposal_id: None, created_at: timestamp.clone(), updated_at: timestamp };
         db::insert_run(connection, &run)?;
-        Ok((context, run))
+        Ok((context, run, assets))
     }).await?;
     let (progress, _) = watch::channel(RunProgress { sequence: 0, run: run.clone() });
     let control = RunControl { progress, cancel: CancellationToken::new() };
     state.runs.lock().await.insert(run.id.clone(), control.clone());
     let response = run.clone();
     let task_state = state.clone();
-    let task = tokio::spawn(async move { execute(task_state, context, run, control, key, max_tokens).await; });
+    let task = tokio::spawn(async move { execute(task_state, context, run, control, key, max_tokens, assets).await; });
     state.tasks.lock().await.push(task);
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
@@ -95,13 +101,13 @@ fn publish(control: &RunControl, run: &Run) {
     control.progress.send_replace(RunProgress { sequence, run: run.clone() });
 }
 
-async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &RunControl, key: &str, max_tokens: u32) -> Result<()> {
+async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &RunControl, key: &str, max_tokens: u32, assets: &[Asset]) -> Result<()> {
     let canvas_mode = context.mode == ResearchMode::Canvas;
+    let messages = crate::visual::messages(context, assets, &state.config.provider.protocol)?;
     let (path, mut body) = match state.config.provider.protocol {
-        Protocol::ChatCompletions => ("/chat/completions", json!({"model":run.model,"messages":context.messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_tokens})),
+        Protocol::ChatCompletions => ("/chat/completions", json!({"model":run.model,"messages":messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_tokens})),
         Protocol::AnthropicMessages => {
             let system = context.messages.iter().filter(|message| message.role == "system").map(|message| message.content.as_str()).collect::<Vec<_>>().join("\n\n");
-            let messages = context.messages.iter().filter(|message| message.role != "system").collect::<Vec<_>>();
             ("/messages", json!({"model":run.model,"system":system,"messages":messages,"stream":true,"max_tokens":max_tokens}))
         }
     };
@@ -109,11 +115,11 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
         let schema = crate::canvas_output::tool_schema()?;
         match state.config.provider.protocol {
             Protocol::AnthropicMessages => {
-                body["tools"] = json!([{"name":"submit_canvas","description":"提交待用户确认的研究分析及操作。create_documents、move_objects、replace_excerpts、create_relations 分别保存各类操作，无操作的数组传空数组。关系使用 source_kind/source_id 和 target_kind/target_id。","input_schema":schema,"strict":true}]);
+                body["tools"] = json!([{"name":"submit_canvas","description":"提交 answer 及按需填写的操作数组。关系使用 source_kind/source_id 和 target_kind/target_id。","input_schema":schema}]);
                 body["tool_choice"] = json!({"type":"tool","name":"submit_canvas","disable_parallel_tool_use":true});
             }
             Protocol::ChatCompletions => {
-                body["tools"] = json!([{"type":"function","function":{"name":"submit_canvas","description":"提交待用户确认的研究分析和分类操作数组，无操作的数组传空数组。","parameters":schema,"strict":true}}]);
+                body["tools"] = json!([{"type":"function","function":{"name":"submit_canvas","description":"提交 answer 及按需填写的操作数组。","parameters":schema}}]);
                 body["tool_choice"] = json!({"type":"function","function":{"name":"submit_canvas"}});
                 body["parallel_tool_calls"] = json!(false);
             }
@@ -192,7 +198,7 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
     Ok(())
 }
 
-async fn execute(state: AppState, context: Context, mut run: Run, control: RunControl, key: String, max_tokens: u32) {
+async fn execute(state: AppState, context: Context, mut run: Run, control: RunControl, key: String, max_tokens: u32, assets: Vec<Asset>) {
     run.status = RunStatus::Running;
     run.updated_at = now();
     let starting = run.clone();
@@ -208,7 +214,7 @@ async fn execute(state: AppState, context: Context, mut run: Run, control: RunCo
         biased;
         _ = state.shutdown.cancelled() => { run.status = RunStatus::Interrupted; run.error = Some("服务正在停止，已保留接收内容".into()); }
         _ = control.cancel.cancelled() => { run.status = RunStatus::Cancelled; }
-        result = generate(&state, &context, &mut run, &control, &key, max_tokens) => {
+        result = generate(&state, &context, &mut run, &control, &key, max_tokens, &assets) => {
             match result {
                 Ok(()) => { run.status = RunStatus::Succeeded; }
                 Err(error) => { run.status = RunStatus::Failed; run.error = Some(error.message); }

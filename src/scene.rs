@@ -87,6 +87,7 @@ pub struct SceneContextInput {
     #[serde(default)] pub entry: Option<String>,
     #[serde(default)] pub frozen_sources: Vec<context::FrozenSource>,
     #[serde(default = "default_inherit")] pub inherit_discussion_sources: bool,
+    #[serde(default)] pub visuals: Vec<crate::visual::VisualInput>,
 }
 
 fn default_inherit() -> bool { true }
@@ -99,7 +100,7 @@ pub enum SceneRequest {
 }
 
 pub async fn capabilities(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({"scene_context":1,"frozen_inheritance":true,"canvas_proposals":if state.config.prompts.contains_key("canvas") { 2 } else { 0 },"canvas_proposal_recovery":1,"claim_reviews":1,"claim_research_plan":1,"relation_endpoints":1,"api_version":2}))
+    Json(json!({"scene_context":1,"frozen_inheritance":true,"canvas_proposals":if state.config.prompts.contains_key("canvas") { 2 } else { 0 },"canvas_proposal_recovery":1,"claim_reviews":1,"claim_research_plan":1,"relation_endpoints":1,"canvas_proposal_materialization":1,"context_freshness":1,"optional_canvas_actions":1,"max_input_characters":state.config.provider.max_input_characters,"visual_inputs":1,"vision_models":state.config.provider.vision_models,"max_input_image_bytes":state.config.provider.max_input_image_bytes,"api_version":2}))
 }
 
 pub async fn api_not_found() -> ApiError { ApiError::missing("API 路径") }
@@ -141,6 +142,7 @@ pub async fn create_context(State(state): State<AppState>, Path(workspace_id): P
                 ReadScope::Full => {
                     let id = object.document_id.as_ref().ok_or_else(|| ApiError::invalid("全文阅读需要文稿标识"))?;
                     let document = db::document(&transaction, id)?;
+                    if object.version.is_some_and(|version| version != document.current_version) { return Err(ApiError::conflict(document.current_version)); }
                     if document.kind == DocumentKind::Discussion && input.inherit_discussion_sources {
                         let parent = document.metadata.get("context_id").and_then(Value::as_str).ok_or_else(|| ApiError::invalid("所选讨论缺少来源快照，请补选来源材料"))?;
                         input.inherit_context_ids.push(parent.to_owned());
@@ -165,7 +167,8 @@ pub async fn create_context(State(state): State<AppState>, Path(workspace_id): P
         if input.write_scope.object_ids.iter().any(|id| !ids.contains(id)) { return Err(ApiError::invalid("写入对象需要包含在当前场景选择中")); }
         let snapshot = SceneSnapshot { canvas_id: canvas.id, revision: canvas.revision, objects: input.objects, relations, write_scope: input.write_scope, viewport: input.viewport, entry: input.entry };
         let request = ContextInput { question: input.question, mode: input.mode, document_ids: input.document_ids, anchor_ids: input.anchor_ids, inherit_context_ids: input.inherit_context_ids, frozen_sources: input.frozen_sources, inherit_discussion_sources: input.inherit_discussion_sources };
-        let result = context::build(&transaction, workspace_id, request, prompt, sources, Some(snapshot))?;
+        let mut result = context::build(&transaction, workspace_id, request, prompt, sources, Some(snapshot))?;
+        crate::visual::attach(&transaction, &mut result, input.visuals)?;
         db::insert_context(&transaction, &result)?;
         transaction.commit()?;
         Ok(result)

@@ -16,6 +16,9 @@ default_model = "cc/gemini-3.8-flash-high"
 allowed_models = ["cc/gemini-3.8-flash-high"]
 request_timeout_seconds = 180
 max_output_tokens = 4096
+max_input_characters = 240000
+vision_models = ["cc/gemini-3.8-flash-high"]
+max_input_image_bytes = 20971520
 models_cache_seconds = 300
 
 [prompts]

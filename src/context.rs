@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use axum::{Json, extract::{Path, State}, http::StatusCode};
 use rusqlite::Connection;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::{db, error::{ApiError, Result}, model::*, research, scene::SceneSnapshot};
 
@@ -22,6 +24,50 @@ pub struct ContextInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenSource { pub context_id: String, pub number: usize }
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Freshness {
+    pub documents: HashMap<String, i64>,
+    pub canvases: HashMap<String, i64>,
+}
+
+pub fn freshness(connection: &Connection, context: &Context) -> Result<Value> {
+    let mut changes = Vec::new();
+    if let Some(read) = &context.freshness {
+        for (id, version) in &read.documents {
+            let current: i64 = connection.query_row("SELECT current_version FROM documents WHERE id=?", [id], |row| row.get(0))?;
+            if current != *version { changes.push(json!({"type":"document","id":id,"expected_version":version,"current_version":current})); }
+        }
+        for (id, revision) in &read.canvases {
+            let current: i64 = connection.query_row("SELECT revision FROM canvases WHERE id=?", [id], |row| row.get(0))?;
+            if current != *revision { changes.push(json!({"type":"canvas","id":id,"expected_revision":revision,"current_revision":current})); }
+        }
+    }
+    Ok(json!({"context_id":context.id,"tracked":context.freshness.is_some(),"fresh":changes.is_empty(),"changes":changes}))
+}
+
+pub fn require_fresh(connection: &Connection, context: &Context) -> Result<()> {
+    let report = freshness(connection, context)?;
+    if report["fresh"] == false {
+        let mut error = ApiError::new(StatusCode::CONFLICT, "stale_context", "所选材料在预览后已有更新，请保存当前编辑并重新预览");
+        error.details = report;
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub async fn read_freshness(State(state): State<crate::AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
+    Ok(Json(state.db.call(move |connection| freshness(connection, &db::context(connection, &id)?)).await?))
+}
+
+pub fn check_budget(context: &Context, limit: Option<usize>) -> Result<()> {
+    if let Some(limit) = limit.filter(|limit| context.character_count > *limit) {
+        let mut error = ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "context_budget_exceeded", "所选材料超出本机配置的输入长度，请减少材料或缩小阅读范围");
+        error.details = json!({"character_count":context.character_count,"max_input_characters":limit,"sources":context.sources.iter().map(|source| json!({"number":source.number,"document_id":source.document_id,"character_count":source.content.chars().count()})).collect::<Vec<_>>()});
+        return Err(error);
+    }
+    Ok(())
+}
 
 pub fn source_for_anchor(connection: &Connection, workspace_id: &str, id: &str) -> Result<ContextSource> {
     let anchor = db::anchor(connection, id)?;
@@ -57,6 +103,17 @@ pub fn build(connection: &Connection, workspace_id: String, input: ContextInput,
     db::workspace(connection, &workspace_id)?;
     if input.question.trim().is_empty() { return Err(ApiError::invalid("讨论问题不能为空")); }
     if input.mode == ResearchMode::Rewrite && input.anchor_ids.len() != 1 { return Err(ApiError::invalid("改写模式需要一个精确选段")); }
+    let mut freshness = Freshness::default();
+    let mut live_documents: HashSet<String> = input.document_ids.iter().cloned().collect();
+    for id in &input.anchor_ids { live_documents.insert(db::anchor(connection, id)?.document_id); }
+    if let Some(scene) = &scene {
+        freshness.canvases.insert(scene.canvas_id.clone(), scene.revision);
+        live_documents.extend(scene.objects.iter().filter_map(|object| object.document_id.clone()));
+    }
+    for id in live_documents {
+        let version = connection.query_row("SELECT current_version FROM documents WHERE id=? AND workspace_id=?", [&id, &workspace_id], |row| row.get(0))?;
+        freshness.documents.insert(id, version);
+    }
     let mut inherited = input.inherit_context_ids.clone();
     if input.inherit_discussion_sources {
         for id in &input.document_ids {
@@ -72,10 +129,12 @@ pub fn build(connection: &Connection, workspace_id: String, input: ContextInput,
     inherited.retain(|id| seen.insert(id.clone()));
     let mut sources = Vec::new();
     let mut scenes = Vec::new();
+    let mut visuals = Vec::new();
     for id in &inherited {
         let parent = db::context(connection, id)?;
         if parent.workspace_id != workspace_id { return Err(ApiError::invalid("继承的上下文属于其他工作区")); }
         for source in parent.sources { append_source(connection, &mut sources, source)?; }
+        for visual in parent.visuals { if !visuals.contains(&visual) { visuals.push(visual); } }
         for mut previous in parent.scenes {
             // 历史场景提供阅读材料；本轮写入范围由新的场景选择确定。
             previous.write_scope = Default::default();
@@ -100,5 +159,5 @@ pub fn build(connection: &Connection, workspace_id: String, input: ContextInput,
     let messages = vec![Message { role: "system".into(), content: prompt }, Message { role: "user".into(), content: format!("来源材料：\n{material}{scene_text}\n\n用户要求：\n{}", input.question) }];
     let mut ordered = Vec::new();
     for source in &sources { if !ordered.contains(&source.document_id) { ordered.push(source.document_id.clone()); } }
-    Ok(Context { id: id(), workspace_id, mode: input.mode, question: input.question, document_ids: input.document_ids, anchor_ids: input.anchor_ids, ordered_document_ids: ordered, sources, inherited_context_ids: inherited, scenes, character_count: messages.iter().map(|message| message.content.chars().count()).sum(), messages, created_at: now() })
+    Ok(Context { id: id(), workspace_id, mode: input.mode, question: input.question, document_ids: input.document_ids, anchor_ids: input.anchor_ids, ordered_document_ids: ordered, sources, inherited_context_ids: inherited, scenes, character_count: messages.iter().map(|message| message.content.chars().count()).sum(), freshness: Some(freshness), visuals, messages, created_at: now() })
 }

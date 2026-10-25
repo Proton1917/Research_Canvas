@@ -9,10 +9,10 @@ use crate::{canvas_proposal::{CanvasAction, Endpoint, GeneratedProposal}, error:
 struct ToolOutput {
     #[schemars(description = "Markdown 分析正文。公式字段值中的命令使用单个反斜杠，例如 $A \\leftrightarrow B$；JSON 序列化由工具协议处理。")]
     answer: String,
-    create_documents: Vec<CreateDocument>,
-    move_objects: Vec<MoveObject>,
-    replace_excerpts: Vec<ReplaceExcerpt>,
-    create_relations: Vec<CreateRelation>,
+    #[serde(default)] create_documents: Vec<CreateDocument>,
+    #[serde(default)] move_objects: Vec<MoveObject>,
+    #[serde(default)] replace_excerpts: Vec<ReplaceExcerpt>,
+    #[serde(default)] create_relations: Vec<CreateRelation>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -25,7 +25,8 @@ struct CreateDocument {
     key: String, title: String,
     #[schemars(description = "Markdown 文稿。LaTeX 命令在字段值中保留单个反斜杠，矩阵换行使用两个反斜杠。JSON 传输转义由工具协议完成。")]
     text: String, kind: NoteKind, bounds: Bounds,
-    source_numbers: Vec<usize>, source_object_ids: Vec<String>,
+    #[serde(default)] source_numbers: Vec<usize>,
+    #[serde(default)] source_object_ids: Vec<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -56,9 +57,13 @@ impl EndpointKind {
 struct CreateRelation {
     key: String, source_kind: EndpointKind, source_id: String,
     target_kind: EndpointKind, target_id: String, label: String,
-    mapping: String, preserved_operations: Vec<String>, conditions: String,
-    counterexamples: String, missing_proof: String, next_validation: String,
-    source_numbers: Vec<usize>,
+    #[serde(default)] mapping: String,
+    #[serde(default)] preserved_operations: Vec<String>,
+    #[serde(default)] conditions: String,
+    #[serde(default)] counterexamples: String,
+    #[serde(default)] missing_proof: String,
+    #[serde(default)] next_validation: String,
+    #[serde(default)] source_numbers: Vec<usize>,
 }
 
 pub fn tool_schema() -> Result<Value> {

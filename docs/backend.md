@@ -80,7 +80,7 @@ conda run --no-capture-output -n base python tests/backend_acceptance.py router
 
 ## 结构化生成与研究端点
 
-画布模式经 `submit_canvas` 工具生成分类操作数组，服务通过类型派生的严格 JSON Schema 声明字段，再转换为公开提案的 `actions`。旧模型输出支持直接 JSON 和单个 JSON Markdown 代码块，解析采用 `serde_json` 与 `pulldown-cmark`。`POST /runs/{id}/recover-canvas-proposal` 可复用完整的失败输出，提案归档保存原始文本及恢复来源。
+画布模式经 `submit_canvas` 提交回答及可选操作数组，服务通过类型派生的 JSON Schema 声明字段，再转换为公开提案的 `actions`。纯回答保存为讨论文稿。旧模型输出支持直接 JSON 和单个 JSON Markdown 代码块，解析采用 `serde_json` 与 `pulldown-cmark`。`POST /runs/{id}/recover-canvas-proposal` 可复用完整的失败输出，提案归档保存原始文本及恢复来源。
 
 关系支持文稿、精确锚点与冻结场景中的自由想法。旧关系在事务迁移中保留标识及内容。`missing_proof` 和 `next_validation` 保存证据缺口与验证方法，随关系修订、提案和归档保留。归档格式 3 同时保存类型化端点，关系 SVG 为片段和自由想法生成对应节点。
 
@@ -93,3 +93,15 @@ conda run --no-capture-output -n base python tests/backend_acceptance.py router
 2026-10-25 使用前端验收记录中的原问题运行验证读取显示，并在独立验证库中完成一次新的 Router 模型调用。旧分析正文和新提案内容均在 Chrome 中显示双向箭头，所检查公式未出现 KaTeX 错误；新输出的代码示例与工具参数中的字面内容一致。原运行、原提案记录及原始模型输出保留。
 
 验收脚本为 `tests/latex_acceptance.py` 和 `tests/latex_content.mjs`，记录保存在 `.runtime/latex-acceptance.json`。截图为 `.runtime/browser/latex-recorded.png` 与 `.runtime/browser/latex-generated.png`。新增运行使用 `.runtime/data/latex-verification.sqlite3`，与前端验收实例分别运行。
+
+## 画布物化、版本与图像输入
+
+`src/canvas_state.rs` 使用 `yrs` 操作编辑器数据。普通保存从 Yjs 读取文稿卡片位置；提案确认在原状态上直接修改目标对象，再生成对象表和连线绑定。事务继续管理内容、研究关系、画布版本及整组撤销。正文、格式及其他对象随 Yjs 原状态保留。
+
+`src/context.rs` 在本轮来源选择时记录文稿和画布版本。发送时使用版本列查询，过期预览返回 `stale_context`。历史上下文继承保留引用时的来源。图像输入由 `src/visual.rs` 根据显式资产选择转换为模型协议，配置支持的模型及输入预算由 `config/server.toml` 提供。
+
+2026-10-25 使用六页产品调整建议 PDF，在 8791 独立实例完成 `tests/canvas_consistency.py` 的画布、上下文、视觉输入及归档阶段。记录位于 `.runtime/canvas-consistency.json`。Chrome 中的编辑器生成原始画布，后端创建两张文稿卡片、移动便笺、建立候选连线；刷新后原有便笺内容保留，整组撤销恢复提交前状态。同一版本的并发保存取得 200 和 409；提交后丢弃响应体再请求同一提案，返回原事务结果。
+
+上下文验证覆盖原文更新后的旧预览拒绝、重新冻结的新版本，以及历史来源保留。纯 `answer` 工具输出保存为讨论文稿。视觉运行发送 PDF 第四页图像，模型读取其中的验收表，响应标识为 `gemini-3.8-flash-n`。模型调用均经过本机 Router 的 `cc/gemini-3.8-flash-high`。工作区导出到 8792 空数据库后逐字段读回一致，包含图像引用及来源版本。
+
+前端界面的默认讨论、显式建立联系、发送前刷新材料和图像选择按 `docs/frontend-handoff.md` 接入。前端交互验收由 Opus 5.5 负责。

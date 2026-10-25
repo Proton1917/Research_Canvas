@@ -250,6 +250,9 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
     let proposal_ids: HashSet<_> = archive.proposals.iter().map(|proposal| &proposal.id).collect();
     let canvas_proposal_ids: HashSet<_> = archive.canvas_proposals.iter().map(|proposal| &proposal.id).collect();
     for context in &archive.contexts {
+        for visual in &context.visuals {
+            if !archive.assets.iter().any(|asset| asset.id == visual.asset_id) || visual.object_ids.is_empty() || visual.object_ids.iter().any(|id| !context.scenes.iter().any(|scene| scene.objects.iter().any(|object| &object.id == id))) { return Err(ApiError::invalid("归档视觉材料的资产或场景对象缺失")); }
+        }
         if context.inherited_context_ids.iter().any(|id| !context_ids.contains(id)) { return Err(ApiError::invalid("归档上下文的继承来源缺失")); }
         for source in &context.sources {
             if !versions.contains_key(&(&source.document_id, source.version)) || source.anchor_id.as_ref().is_some_and(|id| !anchor_ids.contains(id)) { return Err(ApiError::invalid("归档上下文引用了缺失的文稿版本或片段")); }

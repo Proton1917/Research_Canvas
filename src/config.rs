@@ -26,6 +26,9 @@ pub struct Provider {
     pub allowed_models: Vec<String>,
     pub request_timeout_seconds: u64,
     pub max_output_tokens: u32,
+    pub max_input_characters: Option<usize>,
+    #[serde(default)] pub vision_models: Vec<String>,
+    pub max_input_image_bytes: Option<usize>,
     pub models_cache_seconds: u64,
 }
 

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::{Path, State}};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -240,8 +239,16 @@ fn parse_generated_response(answer: &str) -> Result<GeneratedProposal> {
 
 pub fn from_run(connection: &Connection, context: &Context, run: &mut Run) -> Result<()> {
     let mut generated = parse_generated_response(&run.answer)?;
-    validate(context, &generated.actions)?;
     crate::math_text::normalize_generated(&mut generated);
+    if generated.actions.is_empty() {
+        if generated.answer.trim().is_empty() { return Err(ApiError::invalid("模型回答为空")); }
+        let document = db::new_document(context.workspace_id.clone(), context.question.chars().take(80).collect(), DocumentKind::Discussion, Content::text(generated.answer.clone()), json!({"question":context.question,"context_id":context.id,"run_id":run.id,"model":run.model_used,"usage":run.usage,"raw_response":run.answer}));
+        db::insert_document(connection, &document, "generation")?;
+        run.answer = generated.answer;
+        run.document_id = Some(document.id);
+        return Ok(());
+    }
+    validate(context, &generated.actions)?;
     let recovered_from = (run.status == RunStatus::Failed).then(|| json!({"error":run.error,"recovered_at":now()}));
     let proposal = CanvasProposal { id: id(), workspace_id: context.workspace_id.clone(), run_id: run.id.clone(), context_id: context.id.clone(), canvas_id: scene(context)?.canvas_id.clone(), canvas_revision: scene(context)?.revision, revision: 1, status: ProposalStatus::Pending, answer: generated.answer.clone(), raw_response: run.answer.clone(), recovered_from, id_map: allocate_ids(&generated.actions, &HashMap::new()), actions: generated.actions, created_at: now(), application: None };
     insert(connection, &proposal)?;
@@ -308,17 +315,7 @@ pub async fn edit(State(state): State<AppState>, Path(id): Path<String>, Json(in
 pub struct ApplyInput {
     pub expected_revision: i64,
     pub expected_canvas_revision: i64,
-    #[serde(default)] pub editor_state: Option<Value>,
-}
-
-fn validate_editor_state(canvas: &Canvas, state: &Option<Value>) -> Result<()> {
-    if canvas.editor_state.is_some() && state.is_none() { return Err(ApiError::invalid("当前画布包含编辑器状态，请提交按提案生成的完整 editor_state")); }
-    if let Some(state) = state {
-        if state.get("format").and_then(Value::as_str) != Some("blocksuite-yjs-v1") { return Err(ApiError::invalid("画布编辑器状态格式无效")); }
-        let update = state.get("update").and_then(Value::as_str).ok_or_else(|| ApiError::invalid("画布编辑器状态缺少 update"))?;
-        if STANDARD.decode(update).map_err(|_| ApiError::invalid("画布编辑器状态需要 Base64 数据"))?.is_empty() { return Err(ApiError::invalid("画布编辑器状态为空")); }
-    }
-    Ok(())
+    #[serde(default, rename = "editor_state")] pub _editor_state: Option<serde::de::IgnoredAny>,
 }
 
 fn save_canvas(connection: &Connection, canvas: &mut Canvas) -> Result<()> {
@@ -344,7 +341,6 @@ pub async fn apply(State(state): State<AppState>, Path(id): Path<String>, Json(i
         let context = db::context(&transaction, &proposal.context_id)?;
         let mut canvas = db::canvas(&transaction, &proposal.canvas_id)?;
         if canvas.revision != input.expected_canvas_revision || canvas.revision != proposal.canvas_revision { return Err(ApiError::conflict(canvas.revision)); }
-        validate_editor_state(&canvas, &input.editor_state)?;
         let mut application = Application { transaction_id: crate::model::id(), before_canvas: canvas.clone(), before_documents: vec![], created_document_ids: vec![], canvas: canvas.clone(), documents: vec![], relations: vec![], reverted_canvas: None, reverted_documents: vec![] };
         for action in &proposal.actions {
             match action {
@@ -359,7 +355,7 @@ pub async fn apply(State(state): State<AppState>, Path(id): Path<String>, Json(i
                 CanvasAction::MoveObject { object_id, bounds } => {
                     if let Some(object) = canvas.objects.iter_mut().find(|object| &object.id == object_id) {
                         object.x = bounds.x; object.y = bounds.y; object.width = bounds.width; object.height = bounds.height;
-                    } else if input.editor_state.is_none() { return Err(ApiError::invalid("自由对象移动需要编辑器状态")); }
+                    }
                 }
                 CanvasAction::ReplaceExcerpt { anchor_id, expected_version, replacement } => {
                     let anchor = db::anchor(&transaction, anchor_id)?;
@@ -384,7 +380,7 @@ pub async fn apply(State(state): State<AppState>, Path(id): Path<String>, Json(i
                 application.relations.push(relation);
             }
         }
-        canvas.editor_state = input.editor_state;
+        crate::canvas_state::materialize(&application.before_canvas, &mut canvas, &proposal)?;
         save_canvas(&transaction, &mut canvas)?;
         application.canvas = canvas;
         proposal.application = Some(application);

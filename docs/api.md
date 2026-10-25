@@ -8,6 +8,8 @@
 
 `GET /api/capabilities` 返回 `api_version:2`、`scene_context:1`、`frozen_inheritance:true`、`canvas_proposals:2`、`canvas_proposal_recovery:1`、`claim_reviews:1`、`claim_research_plan:1` 和 `relation_endpoints:1`。`canvas_proposals` 在服务缺少 `canvas` 提示词配置时为 0。未知 `/api` 路径返回 JSON 404。场景与画布提案的完整调用约定见 [后端联调接口](backend-integration.md)。
 
+能力响应还提供 `canvas_proposal_materialization`、`context_freshness`、`optional_canvas_actions`、`visual_inputs` 以及模型和输入预算配置。
+
 业务错误统一返回：
 
 ```json
@@ -83,7 +85,7 @@ type Relation = {
 | --- | --- |
 | `POST /workspaces/{id}/canvases` | `{name}` → 画布 |
 | `GET /canvases/{id}` | 画布 |
-| `PUT /canvases/{id}` | `{expected_revision, name, objects, editor_state?}` → 更新后的画布 |
+| `PUT /canvases/{id}` | `{expected_revision, name, objects, editor_state?}` → 更新后的画布；携带编辑状态时从 Yjs 生成对象表 |
 | `POST /workspaces/{id}/relations` | `{source_id,target_id,kind?,label?,include_in_context?,context_order?,claim?}` → 关系 |
 | `PATCH /relations/{id}` | 上述可编辑关系字段的子集 → 关系 |
 | `GET /relations/{id}` | 当前关系及证据复核状态 |
@@ -133,6 +135,8 @@ type ContextRequest = {
 `messages` 是实际发给模型的完整消息数组。上下文保存后保持固定；修改勾选材料或提问内容时重新生成预览。`GET /contexts/{id}` 可读取该快照。
 
 `POST /workspaces/{id}/runs` 接收 `{context_id, model?, max_output_tokens?}`，立即返回运行记录。`GET /workspaces/{id}/runs` 返回该工作区的运行记录。`GET /runs/{id}` 返回当前运行状态，`POST /runs/{id}/cancel` 取消正在执行的运行。
+
+新上下文保存本轮材料版本于 `freshness`。`GET /contexts/{id}/freshness` 返回版本变化详情。发送遇到材料更新时返回 409 `stale_context`；超出本机文本或图像预算时返回 422 `context_budget_exceeded` 或 `image_budget_exceeded`。图像使用场景请求的 `visuals` 字段，支持模型、上限及完整接入数据见 [后端联调接口](backend-integration.md)。
 
 ```typescript
 type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
