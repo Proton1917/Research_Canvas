@@ -103,12 +103,41 @@ pub struct Canvas {
     pub updated_at: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimStatus {
     Analogy,
     Candidate,
     Verified,
+    Supported,
+    Established,
+    Refuted,
+}
+
+pub fn initial_revision() -> i64 { 1 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceRole { Support, Derivation, Counterexample }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRef {
+    pub document_id: String,
+    pub version: i64,
+    #[serde(default)] pub anchor_id: Option<String>,
+    pub role: EvidenceRole,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClaimReview {
+    pub claim_revision: i64,
+    pub status: ClaimStatus,
+    pub evidence: Vec<EvidenceRef>,
+    pub reason: String,
+    pub confirmed_at: String,
+    pub confirmed_by: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -117,6 +146,13 @@ pub struct Claim {
     pub conditions: String,
     pub counterexamples: String,
     pub sources: Vec<String>,
+    #[serde(default)] pub mapping: String,
+    #[serde(default)] pub preserved_operations: Vec<String>,
+    #[serde(default)] pub missing_proof: String,
+    #[serde(default)] pub next_validation: String,
+    #[serde(default = "initial_revision")] pub revision: i64,
+    #[serde(default)] pub reviews: Vec<ClaimReview>,
+    #[serde(default)] pub review_required: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +161,8 @@ pub struct Relation {
     pub workspace_id: String,
     pub source_id: String,
     pub target_id: String,
+    #[serde(default)] pub source_ref: Option<crate::endpoints::ResearchEndpoint>,
+    #[serde(default)] pub target_ref: Option<crate::endpoints::ResearchEndpoint>,
     pub kind: String,
     pub label: String,
     pub include_in_context: bool,
@@ -175,6 +213,7 @@ pub enum ResearchMode {
     Discussion,
     Rewrite,
     Relation,
+    Canvas,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -204,6 +243,10 @@ pub struct Context {
     pub anchor_ids: Vec<String>,
     pub ordered_document_ids: Vec<String>,
     pub sources: Vec<ContextSource>,
+    #[serde(default)]
+    pub inherited_context_ids: Vec<String>,
+    #[serde(default)]
+    pub scenes: Vec<crate::scene::SceneSnapshot>,
     pub messages: Vec<Message>,
     pub character_count: usize,
     pub created_at: String,
@@ -239,6 +282,8 @@ pub struct Run {
     pub error: Option<String>,
     pub document_id: Option<String>,
     pub proposal_id: Option<String>,
+    #[serde(default)]
+    pub canvas_proposal_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -293,5 +338,7 @@ pub struct WorkspaceArchive {
     pub contexts: Vec<Context>,
     pub runs: Vec<Run>,
     pub proposals: Vec<Proposal>,
+    #[serde(default)]
+    pub canvas_proposals: Vec<crate::canvas_proposal::CanvasProposal>,
     pub assets: Vec<Asset>,
 }

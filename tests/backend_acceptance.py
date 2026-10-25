@@ -11,7 +11,6 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = ROOT / ".runtime" / "backend-acceptance.json"
-SOURCE = ROOT / "legal" / "research-material.pdf"
 BASE = "http://127.0.0.1:8787/api"
 TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
 
@@ -27,13 +26,13 @@ def save(record):
     RECORD.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def core(record):
+def core(record, source):
     health = request("GET", "/health").json()
     assert health["database"] == "ready"
     workspace = request("POST", "/workspaces", expected=201, json={"name": "Research Canvas 开源项目调研"}).json()
     workspace_id = workspace["id"]
-    with SOURCE.open("rb") as stream:
-        imported = request("POST", f"/workspaces/{workspace_id}/imports", expected=201, files={"file": (SOURCE.name, stream, "application/pdf")}).json()
+    with source.open("rb") as stream:
+        imported = request("POST", f"/workspaces/{workspace_id}/imports", expected=201, files={"file": (source.name, stream, "application/pdf")}).json()
     document = imported["document"]
     assert len(document["content"]["blocks"]) == 4
     assert [block["page"] for block in document["content"]["blocks"]] == [1, 2, 3, 4]
@@ -53,7 +52,7 @@ def core(record):
     second = request("POST", f"/workspaces/{workspace_id}/relations", expected=201, json={"source_id": notes[0]["id"], "target_id": notes[1]["id"], "kind": "association", "include_in_context": True}).json()
     free_relation = request("POST", f"/workspaces/{workspace_id}/relations", expected=201, json={"source_id": notes[1]["id"], "target_id": document["id"], "label": "研究关联"}).json()
     request("PATCH", f"/relations/{free_relation['id']}", expected=422, json={"include_in_context": True})
-    preview = request("POST", f"/workspaces/{workspace_id}/contexts", expected=201, json={"document_ids": [notes[0]["id"], notes[1]["id"]], "anchor_ids": [anchor["id"]], "question": "根据来源资料，用两句话说明内容与位置分离如何支持修订后的批注追踪，并标出来源编号。", "mode": "relation"}).json()
+    preview = request("POST", f"/workspaces/{workspace_id}/contexts", expected=201, json={"document_ids": [document["id"], notes[0]["id"], notes[1]["id"]], "anchor_ids": [anchor["id"]], "question": "根据来源资料，用两句话说明内容与位置分离如何支持修订后的批注追踪，并标出来源编号。", "mode": "relation"}).json()
     assert preview["ordered_document_ids"] == [document["id"], notes[0]["id"], notes[1]["id"]]
     assert request("GET", f"/contexts/{preview['id']}").json()["messages"] == preview["messages"]
 
@@ -149,11 +148,11 @@ def cancellation(record):
     print("cancellation: passed", flush=True)
 
 
-def export(record):
+def export(record, source):
     workspace_id = record["workspace_id"]
     archive = request("GET", f"/workspaces/{workspace_id}/export").json()
     asset = next(asset for asset in archive["assets"] if asset["id"] == record["asset_id"])
-    assert base64.b64decode(asset["data_base64"]) == SOURCE.read_bytes()
+    assert base64.b64decode(asset["data_base64"]) == source.read_bytes()
     archive_bytes = request("GET", f"/workspaces/{workspace_id}/export.zip").content
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as package:
         saved = json.loads(package.read("workspace.json"))
@@ -189,8 +188,18 @@ def router(record):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=["core", "models", "cancellation", "export", "router"])
-    phase = parser.parse_args().phase
+    parser.add_argument("--source", type=Path, help="项目调研 PDF 的路径，core 和 export 阶段必填")
+    args = parser.parse_args()
+    phase = args.phase
+    if phase in {"core", "export"}:
+        if args.source is None:
+            parser.error(f"{phase} 阶段需要通过 --source 指定项目调研 PDF")
+        if not args.source.is_file():
+            parser.error(f"验收材料文件不存在：{args.source}")
     record = json.loads(RECORD.read_text(encoding="utf-8")) if RECORD.exists() else {}
     if record.get(phase) == "passed":
         raise SystemExit(f"{phase} 已通过；相关条件未变化时复用既有结果。")
-    {"core": core, "models": models, "cancellation": cancellation, "export": export, "router": router}[phase](record)
+    if phase in {"core", "export"}:
+        {"core": core, "export": export}[phase](record, args.source)
+    else:
+        {"models": models, "cancellation": cancellation, "router": router}[phase](record)

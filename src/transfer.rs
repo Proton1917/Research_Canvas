@@ -28,7 +28,10 @@ pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path
         let mut command = tokio::process::Command::new("pdftotext");
         command.args(["-layout", "-enc", "UTF-8"]).arg(path).arg("-").kill_on_drop(true);
         let output = tokio::time::timeout(Duration::from_secs(state.config.pdf_extract_timeout_seconds), command.output()).await
-            .map_err(|_| ApiError::new(StatusCode::REQUEST_TIMEOUT, "pdf_timeout", "PDF 文本提取超时"))??;
+            .map_err(|_| ApiError::new(StatusCode::REQUEST_TIMEOUT, "pdf_timeout", "PDF 文本提取超时"))?
+            .map_err(|error| if error.kind() == std::io::ErrorKind::NotFound {
+                ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "pdf_tool_missing", "PDF 导入需要 Poppler，请安装 pdftotext 并将其加入 PATH 后重新启动服务")
+            } else { ApiError::from(error) })?;
         if !output.status.success() { return Err(ApiError::invalid(format!("PDF 文本提取失败：{}", String::from_utf8_lossy(&output.stderr).chars().take(500).collect::<String>()))); }
         let text = String::from_utf8(output.stdout).map_err(|_| ApiError::invalid("PDF 提取结果不是 UTF-8"))?;
         let mut pages: Vec<_> = text.split('\u{c}').collect();
@@ -82,9 +85,19 @@ pub async fn export_json(State(state): State<AppState>, Path(id): Path<String>) 
 }
 
 fn graph_svg(archive: &WorkspaceArchive) -> Result<Vec<u8>> {
+    let mut nodes = archive.documents.iter().map(|document| (document.id.clone(), document.title.clone(), format!("文稿 · 版本 {}", document.current_version))).collect::<Vec<_>>();
+    let mut ids: HashSet<String> = nodes.iter().map(|(id, _, _)| id.clone()).collect();
+    for relation in &archive.relations {
+        for (id, reference) in [(&relation.source_id, relation.source_ref.as_ref()), (&relation.target_id, relation.target_ref.as_ref())] {
+            if ids.insert(id.clone()) {
+                let (title, detail) = crate::endpoints::archive_label(archive, id, reference)?;
+                nodes.push((id.clone(), title, detail));
+            }
+        }
+    }
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     let width = 900 + archive.relations.len() * 90;
-    let height = 140 + archive.documents.len() * 180;
+    let height = 140 + nodes.len() * 180;
     let view_box = format!("0 0 {width} {height}");
     let mut root = BytesStart::new("svg");
     root.extend_attributes([("xmlns", "http://www.w3.org/2000/svg"), ("viewBox", view_box.as_str()), ("role", "img")]);
@@ -102,8 +115,8 @@ fn graph_svg(archive: &WorkspaceArchive) -> Result<Vec<u8>> {
     writer.write_event(Event::End(BytesEnd::new("marker")))?;
     writer.write_event(Event::End(BytesEnd::new("defs")))?;
     let mut positions = HashMap::new();
-    for (index, document) in archive.documents.iter().enumerate() {
-        positions.insert(&document.id, (50, 70 + index * 180));
+    for (index, (id, _, _)) in nodes.iter().enumerate() {
+        positions.insert(id, (50, 70 + index * 180));
     }
     for (index, relation) in archive.relations.iter().enumerate() {
         if let (Some((x1, y1)), Some((x2, y2))) = (positions.get(&relation.source_id), positions.get(&relation.target_id)) {
@@ -131,16 +144,16 @@ fn graph_svg(archive: &WorkspaceArchive) -> Result<Vec<u8>> {
             }
         }
     }
-    for document in &archive.documents {
-        let (x, y) = positions[&document.id];
+    for (id, title, detail) in &nodes {
+        let (x, y) = positions[id];
         let mut rectangle = BytesStart::new("rect");
         let x_text = x.to_string();
         let y_text = y.to_string();
         rectangle.extend_attributes([("x", x_text.as_str()), ("y", y_text.as_str()), ("width", "580"), ("height", "100"), ("rx", "12"), ("fill", "white"), ("stroke", "#c9c8c4")]);
         writer.write_event(Event::Empty(rectangle))?;
-        svg_text(&mut writer, x + 18, y + 30, &document.title.chars().take(28).collect::<String>(), "16")?;
-        svg_text(&mut writer, x + 18, y + 54, &document.title.chars().skip(28).take(28).collect::<String>(), "16")?;
-        svg_text(&mut writer, x + 18, y + 81, &format!("版本 {} · {}", document.current_version, &document.id[..8]), "12")?;
+        svg_text(&mut writer, x + 18, y + 30, &title.chars().take(28).collect::<String>(), "16")?;
+        svg_text(&mut writer, x + 18, y + 54, &title.chars().skip(28).take(28).collect::<String>(), "16")?;
+        svg_text(&mut writer, x + 18, y + 81, detail, "12")?;
     }
     writer.write_event(Event::End(BytesEnd::new("svg")))?;
     Ok(writer.into_inner().into_inner())
@@ -192,7 +205,7 @@ pub async fn export_zip(State(state): State<AppState>, Path(id): Path<String>) -
 }
 
 fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
-    if archive.format_version != 1 { return Err(ApiError::invalid("归档版本不受支持")); }
+    if !matches!(archive.format_version, 1 | 2 | 3) { return Err(ApiError::invalid("归档版本不受支持")); }
     let workspace_id = &archive.workspace.id;
     uuid::Uuid::parse_str(workspace_id).map_err(|_| ApiError::invalid("工作区标识无效"))?;
     let mut all_ids = HashSet::new();
@@ -203,6 +216,7 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
         .chain(archive.contexts.iter().map(|item| (&item.id, &item.workspace_id)))
         .chain(archive.runs.iter().map(|item| (&item.id, &item.workspace_id)))
         .chain(archive.proposals.iter().map(|item| (&item.id, &item.workspace_id)))
+        .chain(archive.canvas_proposals.iter().map(|item| (&item.id, &item.workspace_id)))
         .chain(archive.assets.iter().map(|item| (&item.id, &item.workspace_id))) {
         if owner != workspace_id || !all_ids.insert(id) || uuid::Uuid::parse_str(id).is_err() { return Err(ApiError::invalid("归档中的对象标识或工作区归属无效")); }
     }
@@ -220,7 +234,9 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
         if canvas.objects.iter().any(|object| !documents.contains(&object.document_id)) { return Err(ApiError::invalid("画布引用了归档之外的文稿")); }
     }
     for relation in &archive.relations {
-        if !documents.contains(&relation.source_id) || !documents.contains(&relation.target_id) { return Err(ApiError::invalid("关系引用了归档之外的文稿")); }
+        crate::endpoints::validate_archive(archive, &relation.source_id, relation.source_ref.as_ref())?;
+        crate::endpoints::validate_archive(archive, &relation.target_id, relation.target_ref.as_ref())?;
+        if relation.include_in_context && (!documents.contains(&relation.source_id) || !documents.contains(&relation.target_id)) { return Err(ApiError::invalid("旧版上下文连线的端点需要是文稿")); }
     }
     research::context_order(&archive.documents.iter().map(|document| document.id.clone()).collect::<Vec<_>>(), &archive.documents, &archive.relations)?;
     for anchor in &archive.anchors {
@@ -232,11 +248,35 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
     let run_ids: HashSet<_> = archive.runs.iter().map(|run| &run.id).collect();
     let anchor_ids: HashSet<_> = archive.anchors.iter().map(|anchor| &anchor.id).collect();
     let proposal_ids: HashSet<_> = archive.proposals.iter().map(|proposal| &proposal.id).collect();
+    let canvas_proposal_ids: HashSet<_> = archive.canvas_proposals.iter().map(|proposal| &proposal.id).collect();
+    for context in &archive.contexts {
+        if context.inherited_context_ids.iter().any(|id| !context_ids.contains(id)) { return Err(ApiError::invalid("归档上下文的继承来源缺失")); }
+        for source in &context.sources {
+            if !versions.contains_key(&(&source.document_id, source.version)) || source.anchor_id.as_ref().is_some_and(|id| !anchor_ids.contains(id)) { return Err(ApiError::invalid("归档上下文引用了缺失的文稿版本或片段")); }
+        }
+        if context.scenes.iter().any(|scene| !archive.canvases.iter().any(|canvas| canvas.id == scene.canvas_id) || scene.objects.iter().any(|object| object.document_id.as_ref().is_some_and(|id| !documents.contains(id)))) { return Err(ApiError::invalid("归档场景的画布或文稿引用缺失")); }
+    }
+    for relation in &archive.relations {
+        if let Some(claim) = &relation.claim {
+            for source in claim.reviews.iter().flat_map(|review| &review.evidence) {
+                if !versions.contains_key(&(&source.document_id, source.version)) { return Err(ApiError::invalid("归档研究证据的版本缺失")); }
+                if let Some(id) = &source.anchor_id {
+                    if !archive.anchors.iter().any(|anchor| &anchor.id == id && anchor.document_id == source.document_id && anchor.version == source.version) { return Err(ApiError::invalid("归档研究证据的锚点与版本不一致")); }
+                }
+            }
+        }
+    }
     for run in &archive.runs {
+        if run.canvas_proposal_id.as_ref().is_some_and(|id| !canvas_proposal_ids.contains(id)) { return Err(ApiError::invalid("画布提案运行记录引用不完整")); }
         if !context_ids.contains(&run.context_id) || run.document_id.as_ref().is_some_and(|id| !documents.contains(id)) || run.proposal_id.as_ref().is_some_and(|id| !proposal_ids.contains(id)) { return Err(ApiError::invalid("运行记录引用不完整")); }
     }
     for proposal in &archive.proposals {
         if !run_ids.contains(&proposal.run_id) || !anchor_ids.contains(&proposal.anchor_id) { return Err(ApiError::invalid("修改提案来源不完整")); }
+    }
+    for proposal in &archive.canvas_proposals {
+        if !run_ids.contains(&proposal.run_id) || !context_ids.contains(&proposal.context_id) || !archive.canvases.iter().any(|canvas| canvas.id == proposal.canvas_id) { return Err(ApiError::invalid("画布提案来源不完整")); }
+        let context = archive.contexts.iter().find(|context| context.id == proposal.context_id).ok_or_else(|| ApiError::invalid("画布提案上下文缺失"))?;
+        crate::canvas_proposal::validate_archive(proposal, context, &documents)?;
     }
     Ok(())
 }
@@ -262,6 +302,7 @@ pub async fn import_archive(State(state): State<AppState>, Json(mut archive): Js
             db::insert_run(&transaction, run)?;
         }
         for proposal in &archive.proposals { db::insert_proposal(&transaction, proposal)?; }
+        for proposal in &archive.canvas_proposals { crate::canvas_proposal::insert(&transaction, proposal)?; }
         for asset in &archive.assets { db::insert_asset(&transaction, asset)?; }
         transaction.commit()?;
         Ok(archive.workspace)

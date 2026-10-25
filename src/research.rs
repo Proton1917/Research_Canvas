@@ -49,6 +49,17 @@ pub fn quote_at(text: &str, start: usize, quote: &str) -> bool {
     utf16_to_byte(text, start).is_some_and(|byte| text[byte..].starts_with(quote))
 }
 
+pub fn replace_excerpt(document: &mut Document, anchor: &Anchor, replacement: &str) -> Result<()> {
+    let location = resolve_anchor(anchor, document);
+    if !matches!(location.status, AnchorStatus::Exact | AnchorStatus::Relocated) { return Err(ApiError::invalid("原选段无法唯一定位，请重新选择原文并生成提案")); }
+    let block = document.content.blocks.iter_mut().find(|block| Some(&block.id) == location.block_id.as_ref()).ok_or_else(|| ApiError::missing("原文块"))?;
+    let start = utf16_to_byte(&block.text, location.start_utf16.ok_or_else(|| ApiError::internal("锚点偏移缺失"))?).ok_or_else(|| ApiError::internal("锚点偏移无效"))?;
+    block.text.replace_range(start..start + anchor.quote.len(), replacement);
+    document.content.editor_state = None;
+    document.content.markdown = None;
+    Ok(())
+}
+
 pub fn resolve_anchor(anchor: &Anchor, document: &Document) -> AnchorResolution {
     let mut result = AnchorResolution {
         anchor: anchor.clone(), status: AnchorStatus::Missing,

@@ -22,3 +22,4 @@ models_cache_seconds = 300
 discussion = "config/prompts/discussion.txt"
 rewrite = "config/prompts/rewrite.txt"
 relation = "config/prompts/relation.txt"
+canvas = "config/prompts/canvas.txt"

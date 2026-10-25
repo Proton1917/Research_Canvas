@@ -76,7 +76,7 @@ pub async fn start_run(State(state): State<AppState>, Path(workspace_id): Path<S
         let context = db::context(connection, &input.context_id)?;
         if context.workspace_id != workspace_id { return Err(ApiError::invalid("上下文属于其他工作区")); }
         let timestamp = now();
-        let run = Run { id: id(), workspace_id, context_id: context.id.clone(), model, status: RunStatus::Queued, answer: String::new(), model_used: None, usage: None, error: None, document_id: None, proposal_id: None, created_at: timestamp.clone(), updated_at: timestamp };
+        let run = Run { id: id(), workspace_id, context_id: context.id.clone(), model, status: RunStatus::Queued, answer: String::new(), model_used: None, usage: None, error: None, document_id: None, proposal_id: None, canvas_proposal_id: None, created_at: timestamp.clone(), updated_at: timestamp };
         db::insert_run(connection, &run)?;
         Ok((context, run))
     }).await?;
@@ -96,7 +96,8 @@ fn publish(control: &RunControl, run: &Run) {
 }
 
 async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &RunControl, key: &str, max_tokens: u32) -> Result<()> {
-    let (path, body) = match state.config.provider.protocol {
+    let canvas_mode = context.mode == ResearchMode::Canvas;
+    let (path, mut body) = match state.config.provider.protocol {
         Protocol::ChatCompletions => ("/chat/completions", json!({"model":run.model,"messages":context.messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_tokens})),
         Protocol::AnthropicMessages => {
             let system = context.messages.iter().filter(|message| message.role == "system").map(|message| message.content.as_str()).collect::<Vec<_>>().join("\n\n");
@@ -104,6 +105,20 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
             ("/messages", json!({"model":run.model,"system":system,"messages":messages,"stream":true,"max_tokens":max_tokens}))
         }
     };
+    if canvas_mode {
+        let schema = crate::canvas_output::tool_schema()?;
+        match state.config.provider.protocol {
+            Protocol::AnthropicMessages => {
+                body["tools"] = json!([{"name":"submit_canvas","description":"提交待用户确认的研究分析及操作。create_documents、move_objects、replace_excerpts、create_relations 分别保存各类操作，无操作的数组传空数组。关系使用 source_kind/source_id 和 target_kind/target_id。","input_schema":schema,"strict":true}]);
+                body["tool_choice"] = json!({"type":"tool","name":"submit_canvas","disable_parallel_tool_use":true});
+            }
+            Protocol::ChatCompletions => {
+                body["tools"] = json!([{"type":"function","function":{"name":"submit_canvas","description":"提交待用户确认的研究分析和分类操作数组，无操作的数组传空数组。","parameters":schema,"strict":true}}]);
+                body["tool_choice"] = json!({"type":"function","function":{"name":"submit_canvas"}});
+                body["parallel_tool_calls"] = json!(false);
+            }
+        }
+    }
     let response = provider_request(state, reqwest::Method::POST, path)?
         .json(&body)
         .send().await.map_err(|error| upstream_error(error, key))?;
@@ -112,6 +127,7 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
     let mut last_publish = Instant::now();
     let mut completed = false;
     let mut finish_reason = None;
+    let mut canvas_tool_index = None;
     while let Some(event) = stream.next().await {
         let event = event.map_err(|error| upstream_error(error, key))?;
         if event.data.trim() == "[DONE]" { completed = true; break; }
@@ -123,15 +139,35 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
                 if let Some(model) = value.get("model").and_then(Value::as_str) { run.model_used = Some(model.to_string()); }
                 if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) { run.usage = Some(usage.clone()); }
                 if let Some(choice) = value.get("choices").and_then(Value::as_array).and_then(|choices| choices.first()) {
-                    if let Some(content) = choice.pointer("/delta/content").and_then(Value::as_str) { run.answer.push_str(content); }
+                    if !canvas_mode {
+                        if let Some(content) = choice.pointer("/delta/content").and_then(Value::as_str) { run.answer.push_str(content); }
+                    } else if let Some(calls) = choice.pointer("/delta/tool_calls").and_then(Value::as_array) {
+                        for call in calls {
+                            if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
+                                if name != "submit_canvas" || canvas_tool_index.is_some() { return Err(upstream_error("画布运行需要一个 submit_canvas 工具调用", key)); }
+                                canvas_tool_index = call.get("index").and_then(Value::as_u64);
+                            }
+                            if canvas_tool_index.is_none() || call.get("index").and_then(Value::as_u64) != canvas_tool_index { return Err(upstream_error("画布工具流标识不一致", key)); }
+                            if let Some(arguments) = call.pointer("/function/arguments").and_then(Value::as_str) { run.answer.push_str(arguments); }
+                        }
+                    }
                     if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) { finish_reason = Some(reason.to_string()); }
                 }
             }
             Protocol::AnthropicMessages => {
                 if let Some(model) = value.pointer("/message/model").and_then(Value::as_str) { run.model_used = Some(model.to_string()); }
                 if value.get("type").and_then(Value::as_str) == Some("message_stop") { completed = true; break; }
-                if value.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta") {
+                if !canvas_mode && value.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta") {
                     if let Some(text) = value.pointer("/delta/text").and_then(Value::as_str) { run.answer.push_str(text); }
+                }
+                if canvas_mode && value.get("type").and_then(Value::as_str) == Some("content_block_start") && value.pointer("/content_block/type").and_then(Value::as_str) == Some("tool_use") {
+                    if value.pointer("/content_block/name").and_then(Value::as_str) != Some("submit_canvas") || canvas_tool_index.is_some() { return Err(upstream_error("画布运行需要一个 submit_canvas 工具调用", key)); }
+                    canvas_tool_index = value.get("index").and_then(Value::as_u64);
+                    if let Some(input) = value.pointer("/content_block/input").filter(|input| input.as_object().is_some_and(|object| !object.is_empty())) { run.answer = serde_json::to_string(input)?; }
+                }
+                if canvas_mode && value.pointer("/delta/type").and_then(Value::as_str) == Some("input_json_delta") {
+                    if canvas_tool_index.is_none() || value.get("index").and_then(Value::as_u64) != canvas_tool_index { return Err(upstream_error("画布工具流标识不一致", key)); }
+                    if let Some(partial) = value.pointer("/delta/partial_json").and_then(Value::as_str) { run.answer.push_str(partial); }
                 }
                 if let Some(reason) = value.pointer("/delta/stop_reason").and_then(Value::as_str) { finish_reason = Some(reason.to_string()); }
                 if let Some(usage) = value.get("usage").or_else(|| value.pointer("/message/usage")).and_then(Value::as_object) {
@@ -147,6 +183,7 @@ async fn generate(state: &AppState, context: &Context, run: &mut Run, control: &
         }
     }
     if !completed { return Err(upstream_error("模型流在完成标记前中断，已保留接收内容", key)); }
+    if canvas_mode && canvas_tool_index.is_none() { return Err(upstream_error("模型服务未返回 submit_canvas 结构化操作", key)); }
     if run.answer.trim().is_empty() { return Err(upstream_error("模型服务完成了请求，但未返回正文", key)); }
     if let Some(reason) = finish_reason {
         let usage = run.usage.get_or_insert_with(|| json!({}));
@@ -183,7 +220,9 @@ async fn execute(state: AppState, context: Context, mut run: Run, control: RunCo
     let result = state.db.call(move |connection| {
         let transaction = connection.transaction()?;
         if finished.status == RunStatus::Succeeded {
-            if context.mode == ResearchMode::Rewrite {
+            if context.mode == ResearchMode::Canvas {
+                crate::canvas_proposal::from_run(&transaction, &context, &mut finished)?;
+            } else if context.mode == ResearchMode::Rewrite {
                 let proposal = Proposal { id: id(), workspace_id: finished.workspace_id.clone(), run_id: finished.id.clone(), anchor_id: context.anchor_ids[0].clone(), replacement: finished.answer.clone(), status: ProposalStatus::Pending, applied_version: None, previous_version: None, created_at: now() };
                 db::insert_proposal(&transaction, &proposal)?;
                 finished.proposal_id = Some(proposal.id);
@@ -193,7 +232,7 @@ async fn execute(state: AppState, context: Context, mut run: Run, control: RunCo
                 let mut sources = HashSet::new();
                 for source in &context.sources {
                     if !sources.insert(&source.document_id) { continue; }
-                    db::insert_relation(&transaction, &Relation { id: id(), workspace_id: finished.workspace_id.clone(), source_id: source.document_id.clone(), target_id: document.id.clone(), kind: "context".into(), label: "讨论来源".into(), include_in_context: true, context_order: source.number as i64, claim: None, created_at: now() })?;
+                    db::insert_relation(&transaction, &Relation { id: id(), workspace_id: finished.workspace_id.clone(), source_id: source.document_id.clone(), target_id: document.id.clone(), source_ref: None, target_ref: None, kind: "context".into(), label: "讨论来源".into(), include_in_context: false, context_order: source.number as i64, claim: None, created_at: now() })?;
                 }
                 finished.document_id = Some(document.id);
             }

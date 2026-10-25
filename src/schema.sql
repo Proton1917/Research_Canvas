@@ -37,14 +37,16 @@ CREATE TABLE IF NOT EXISTS canvases (
 CREATE TABLE IF NOT EXISTS relations (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  source_id TEXT NOT NULL REFERENCES documents(id),
-  target_id TEXT NOT NULL REFERENCES documents(id),
+  source_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
   kind TEXT NOT NULL,
   label TEXT NOT NULL,
   include_in_context INTEGER NOT NULL,
   context_order INTEGER NOT NULL,
   claim TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  source_ref TEXT,
+  target_ref TEXT
 );
 CREATE TABLE IF NOT EXISTS anchors (
   id TEXT PRIMARY KEY,
@@ -98,6 +100,13 @@ CREATE TABLE IF NOT EXISTS assets (
   filename TEXT NOT NULL,
   media_type TEXT NOT NULL,
   data BLOB NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS canvas_proposals (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+  payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS documents_workspace ON documents(workspace_id);

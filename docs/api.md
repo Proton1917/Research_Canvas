@@ -6,6 +6,8 @@
 
 `GET /api/health` 返回服务、数据库和凭据配置状态。`provider_configured` 表示本服务具备配置要求的客户端凭据；Router 的 OAuth 授权及模型可用性通过实际请求确认。`GET /api/models` 返回经过允许列表过滤的模型目录与默认模型。当前通道为本机 Router OAuth，模型标识 `cc/gemini-3.8-flash-high`。前端模型选择来自该目录。
 
+`GET /api/capabilities` 返回 `api_version:2`、`scene_context:1`、`frozen_inheritance:true`、`canvas_proposals:2`、`canvas_proposal_recovery:1`、`claim_reviews:1`、`claim_research_plan:1` 和 `relation_endpoints:1`。`canvas_proposals` 在服务缺少 `canvas` 提示词配置时为 0。未知 `/api` 路径返回 JSON 404。场景与画布提案的完整调用约定见 [后端联调接口](backend-integration.md)。
+
 业务错误统一返回：
 
 ```json
@@ -61,17 +63,21 @@ type Canvas = {
   objects: CanvasObject[]; editor_state: unknown | null; updated_at: string;
 };
 type Claim = {
-  status: "analogy" | "candidate" | "verified";
+  status: "analogy" | "candidate" | "supported" | "established" | "refuted" | "verified";
   conditions: string; counterexamples: string; sources: string[];
+  mapping: string; preserved_operations: string[];
+  missing_proof: string; next_validation: string;
+  revision: number; reviews: ClaimReview[]; review_required: boolean;
 };
 type Relation = {
   id: string; workspace_id: string; source_id: string; target_id: string;
+  source_ref: ResearchEndpoint | null; target_ref: ResearchEndpoint | null;
   kind: string; label: string; include_in_context: boolean;
   context_order: number; claim: Claim | null; created_at: string;
 };
 ```
 
-`CanvasObject` 引用统一文稿；同一文稿可在多张画布中出现。原生绘图、框、笔迹和编辑器布局保存在画布 `editor_state`。`Relation` 连接文稿或讨论文稿。自由关系默认 `include_in_context=false`；参与上下文的关系具有方向，后端拒绝其形成循环。
+`CanvasObject` 引用统一文稿；同一文稿可在多张画布中出现。原生绘图、框、笔迹和编辑器布局保存在画布 `editor_state`。`Relation` 支持文稿、精确锚点及冻结场景中的自由想法端点，类型引用见 `backend-integration.md`。旧文稿端点可继续使用 `source_id`、`target_id`；新端点通过 `source_ref`、`target_ref` 提交。自由关系默认 `include_in_context=false`；旧版有向上下文连线使用文稿端点并执行循环校验。
 
 | 方法与路径 | 输入及结果 |
 | --- | --- |
@@ -80,6 +86,8 @@ type Relation = {
 | `PUT /canvases/{id}` | `{expected_revision, name, objects, editor_state?}` → 更新后的画布 |
 | `POST /workspaces/{id}/relations` | `{source_id,target_id,kind?,label?,include_in_context?,context_order?,claim?}` → 关系 |
 | `PATCH /relations/{id}` | 上述可编辑关系字段的子集 → 关系 |
+| `GET /relations/{id}` | 当前关系及证据复核状态 |
+| `POST /relations/{id}/review` | 带版本的证据、目标状态、判断依据和人工确认 → 关系 |
 | `DELETE /relations/{id}` | 删除关系，204 |
 
 ## 选段锚点
@@ -112,10 +120,15 @@ type ContextRequest = {
   mode?: "discussion" | "rewrite" | "relation";
   document_ids?: string[];
   anchor_ids?: string[];
+  inherit_context_ids?: string[];
+  inherit_discussion_sources?: boolean;
+  frozen_sources?: {context_id: string; number: number}[];
 };
 ```
 
-服务按参与上下文的入边遍历祖先，按连线 `context_order`、创建时间及标识排序并去重。响应包括 `id, workspace_id, mode, question, document_ids, anchor_ids, ordered_document_ids, sources, messages, character_count, created_at`。`sources` 的每项包含 `number, document_id, version, title, content, anchor_id, anchor_status`。整篇文稿使用预览时的版本；选段使用锚点所保存的历史版本，并展示当前定位状态。
+服务读取显式选择的文稿和锚点。选入讨论文稿时，默认继承其 `metadata.context_id` 指向的冻结来源及历史场景，再加入本次选入的讨论正文。`inherit_discussion_sources=false` 用于用户逐项调整材料范围；`inherit_context_ids` 继承完整快照中的材料，`frozen_sources` 按快照和来源编号选入单项材料。材料按文稿、版本、锚点共同去重，关系线继续独立保存。
+
+响应包括 `id, workspace_id, mode, question, document_ids, anchor_ids, ordered_document_ids, sources, inherited_context_ids, scenes, messages, character_count, created_at`。`sources` 的每项包含 `number, document_id, version, title, content, anchor_id, anchor_status`。显式整篇文稿使用预览时的版本；片段和继承材料使用原引用版本，锚点状态反映当前定位情况。缺少讨论来源快照时返回错误，用户可补选材料范围。输入中的未知字段会被拒绝。
 
 `messages` 是实际发给模型的完整消息数组。上下文保存后保持固定；修改勾选材料或提问内容时重新生成预览。`GET /contexts/{id}` 可读取该快照。
 
@@ -128,6 +141,7 @@ type Run = {
   status: RunStatus; answer: string; model_used: string | null;
   usage: unknown | null; error: string | null;
   document_id: string | null; proposal_id: string | null;
+  canvas_proposal_id: string | null;
   created_at: string; updated_at: string;
 };
 ```
@@ -137,6 +151,10 @@ type Run = {
 讨论和关系分析成功后创建 `kind=discussion` 的文稿，并保存问题、模型、用量和上下文来源。返回的 `document_id` 可作为后续分支的材料，多个讨论文稿可共同作为新上下文的入口。前端通过用户操作将结果加入画布。
 
 改写模式要求恰好一个锚点，成功后返回 `proposal_id`。此时原文保持原版本，前端显示修改预览。
+
+场景接口支持 `mode=canvas`，通过 `submit_canvas` 结构化工具输出，运行成功后返回 `canvas_proposal_id`。画布操作经结构检查后保存为待确认提案。流式阶段 `answer` 为正在接收的工具参数 JSON，成功后转换为其中的分析正文；完整操作从画布提案接口读取。画布中的正式写入由应用接口执行。
+
+`POST /runs/{id}/recover-canvas-proposal` 重新解析已保存、模型输出完整的失败画布运行。解析接受直接 JSON 对象或单个 JSON Markdown 代码块；成功时生成待确认提案并返回更新后的运行，保留原始输出和恢复记录。该接口复用原模型输出。JSON 内容自身无效时返回具体格式错误。
 
 ## 修改提案
 
@@ -160,4 +178,4 @@ type Run = {
 | `GET /workspaces/{id}/export.zip` | 包含 Markdown、关系 SVG、原始资产及完整 JSON 的 ZIP |
 | `POST /workspaces/import` | 提交完整 JSON 归档，恢复原标识及版本；目标工作区标识已存在时返回 409 |
 
-PDF 保留原始文件，提取每页文本作为独立文本块并记录页码。完整归档的 `format_version=1`，包括 `workspace,documents,versions,canvases,relations,anchors,contexts,runs,proposals,assets`。其中资产使用 `data_base64` 保存。导出文稿中的 AI 内容保留模型、运行和上下文来源。
+PDF 保留原始文件，提取每页文本作为独立文本块并记录页码。完整归档的 `format_version=3`，包括 `workspace,documents,versions,canvases,relations,anchors,contexts,runs,proposals,canvas_proposals,assets`，保留类型化关系端点。恢复同时接受版本 1 和 2。资产使用 `data_base64` 保存。画布提案包含原始输出、应用与撤销记录，讨论保留模型、运行及冻结来源。

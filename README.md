@@ -2,9 +2,15 @@
 
 Research Canvas 是面向科研文稿、数学公式、无限画布和分支讨论的研究工作区。文稿、画布布局、讨论上下文、来源锚点与历史版本使用统一的数据模型。
 
-项目处于开发阶段。文稿、版本、画布、关系、锚点、模型调用和归档接口已接入统一后端；界面提供文稿、画布、讨论、关系和版本操作，完整流程的联调仍在推进。
+项目提供文稿与公式编辑、无限画布、精确片段讨论、画布 AI 操作提案、类型化研究关系、证据确认和可恢复归档。AI 写入经过预览与确认，并支持撤销。
 
 产品流程见 [科研画布原型要求](docs/prototype-scope.md)，开发约定见 [贡献说明](CONTRIBUTING.md)。
+
+## 下载安装
+
+从 [GitHub Releases](https://github.com/Proton1917/Research_Canvas/releases) 下载 Windows x64、macOS Apple Silicon、macOS Intel 或 Linux x64 发行包。完整解压后，Windows 双击 `start.cmd`，macOS 打开 `Start.command`，Linux 运行 `bash start.sh`，然后访问 `http://127.0.0.1:8787`。
+
+发行包包含编译后的程序和界面。各系统的安装步骤、PDF 工具、模型配置、数据迁移和故障处理见 [安装与使用指南](docs/installation.md)。
 
 ## 构建与运行
 
@@ -14,8 +20,7 @@ Research Canvas 是面向科研文稿、数学公式、无限画布和分支讨�
 git clone https://github.com/Proton1917/Research_Canvas.git
 cd Research_Canvas
 cp -n config/server.example.toml config/server.toml
-source scripts/environment.sh
-npm install --prefix .runtime/toolchain --no-save --package-lock=false --no-audit --no-fund node@22.23.4
+npm install --prefix .runtime/toolchain --cache .runtime/npm-cache --no-save --package-lock=false --no-audit --no-fund node@22.23.4
 bash scripts/web.sh install
 bash scripts/build.sh
 bash scripts/backend.sh start
@@ -40,7 +45,6 @@ SQLite 数据库位于 `.runtime/data/research-canvas.sqlite3`。PDF 原始文�
 | `tests/backend_acceptance.py` | 使用调研资料与实际模型响应的后端验收入口 |
 | `Cargo.toml`、`package.json` | 项目依赖及构建入口 |
 | `target/`、`dist/` | Rust 和前端构建产物 |
-| `legal/` | 第三方版权、许可文本及来源记录 |
 | `.runtime/`、`tmp/` | 运行数据、工具、缓存、日志与中间文件 |
 
 源码按功能组织在 `src/`，通过根目录配置统一构建。内部编辑模块使用 `@editor`，研究模块使用 `@research`，通用组件使用 `@ui`。
@@ -57,4 +61,4 @@ bash scripts/web.sh dev
 
 ## 许可证
 
-Research Canvas 统一采用 [Mozilla Public License 2.0](LICENSE)。所有源码和功能模块遵循根目录许可证。第三方原作者版权、许可告知和来源记录集中保存于 [legal/THIRD_PARTY_NOTICES.md](legal/THIRD_PARTY_NOTICES.md)。
+Research Canvas 自有代码采用 [Mozilla Public License 2.0](LICENSE)。

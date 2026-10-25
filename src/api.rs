@@ -14,7 +14,7 @@ pub struct NameInput { pub name: String }
 
 pub async fn health(State(state): State<AppState>) -> Result<Json<Value>> {
     state.db.call(|connection| { connection.query_row("SELECT 1", [], |_| Ok(()))?; Ok(()) }).await?;
-    Ok(Json(json!({"service":"research-canvas", "api_version":1, "database":"ready", "provider_configured":state.config.credentials_available(), "default_model":state.config.provider.default_model})))
+    Ok(Json(json!({"service":"research-canvas", "api_version":2, "database":"ready", "provider_configured":state.config.credentials_available(), "default_model":state.config.provider.default_model})))
 }
 
 pub async fn list_workspaces(State(state): State<AppState>) -> Result<Json<Vec<Workspace>>> {
@@ -173,17 +173,18 @@ pub async fn update_canvas(State(state): State<AppState>, Path(id): Path<String>
 #[derive(Deserialize, Default)]
 pub struct RelationInput {
     pub source_id: Option<String>, pub target_id: Option<String>,
+    pub source_ref: Option<crate::endpoints::ResearchEndpoint>,
+    pub target_ref: Option<crate::endpoints::ResearchEndpoint>,
     pub kind: Option<String>, pub label: Option<String>,
     pub include_in_context: Option<bool>, pub context_order: Option<i64>,
     pub claim: Option<Claim>,
+    pub expected_claim_revision: Option<i64>,
 }
 
 fn validate_relation(connection: &rusqlite::Connection, relation: &Relation) -> Result<()> {
-    let documents = db::documents(connection, &relation.workspace_id)?;
-    for id in [&relation.source_id, &relation.target_id] {
-        if !documents.iter().any(|document| &document.id == id) { return Err(ApiError::invalid("关系两端须属于当前工作区")); }
-    }
     if relation.include_in_context {
+        if relation.source_ref.as_ref().is_some_and(|reference| !matches!(reference, crate::endpoints::ResearchEndpoint::Document { .. })) || relation.target_ref.as_ref().is_some_and(|reference| !matches!(reference, crate::endpoints::ResearchEndpoint::Document { .. })) { return Err(ApiError::invalid("旧版上下文连线用于文稿端点，精确材料通过上下文选择提交")); }
+        let documents = db::documents(connection, &relation.workspace_id)?;
         let mut relations = db::relations(connection, &relation.workspace_id)?;
         relations.retain(|existing| existing.id != relation.id);
         relations.push(relation.clone());
@@ -192,13 +193,20 @@ fn validate_relation(connection: &rusqlite::Connection, relation: &Relation) -> 
     Ok(())
 }
 
-pub async fn create_relation(State(state): State<AppState>, Path(workspace_id): Path<String>, Json(input): Json<RelationInput>) -> Result<(StatusCode, Json<Relation>)> {
+pub async fn create_relation(State(state): State<AppState>, Path(workspace_id): Path<String>, Json(mut input): Json<RelationInput>) -> Result<(StatusCode, Json<Relation>)> {
+    if let Some(claim) = input.claim.as_mut() {
+        if crate::claim::needs_evidence(&claim.status) { return Err(ApiError::invalid("请通过研究状态确认接口提交证据和人工确认")); }
+        claim.revision = 1;
+        claim.reviews.clear();
+        claim.review_required = false;
+    }
     let result = state.db.call(move |connection| {
         let transaction = connection.transaction()?;
+        let (source_id, source_ref) = crate::endpoints::input(&transaction, &workspace_id, input.source_id, input.source_ref)?;
+        let (target_id, target_ref) = crate::endpoints::input(&transaction, &workspace_id, input.target_id, input.target_ref)?;
         let relation = Relation {
             id: id(), workspace_id,
-            source_id: input.source_id.ok_or_else(|| ApiError::invalid("缺少 source_id"))?,
-            target_id: input.target_id.ok_or_else(|| ApiError::invalid("缺少 target_id"))?,
+            source_id, target_id, source_ref, target_ref,
             kind: input.kind.unwrap_or_else(|| "association".into()), label: input.label.unwrap_or_default(),
             include_in_context: input.include_in_context.unwrap_or(false), context_order: input.context_order.unwrap_or(0),
             claim: input.claim, created_at: now(),
@@ -212,19 +220,33 @@ pub async fn create_relation(State(state): State<AppState>, Path(workspace_id): 
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-pub async fn update_relation(State(state): State<AppState>, Path(id): Path<String>, Json(input): Json<RelationInput>) -> Result<Json<Relation>> {
+pub async fn update_relation(State(state): State<AppState>, Path(id): Path<String>, Json(mut input): Json<RelationInput>) -> Result<Json<Relation>> {
     Ok(Json(state.db.call(move |connection| {
         let transaction = connection.transaction()?;
         let mut relation = db::relation(&transaction, &id)?;
-        if let Some(value) = input.source_id { relation.source_id = value; }
-        if let Some(value) = input.target_id { relation.target_id = value; }
+        let previous = relation.claim.clone();
+        if let Some(claim) = &previous {
+            if input.expected_claim_revision.is_some_and(|revision| revision != claim.revision) || (!claim.reviews.is_empty() && input.expected_claim_revision.is_none()) { return Err(ApiError::conflict(claim.revision)); }
+        }
+        if let Some(claim) = input.claim.as_mut() {
+            if crate::claim::needs_evidence(&claim.status) && previous.as_ref().is_none_or(|old| old.status != claim.status) { return Err(ApiError::invalid("请通过研究状态确认接口提交证据和人工确认")); }
+            claim.reviews = previous.as_ref().map(|old| old.reviews.clone()).unwrap_or_default();
+        }
+        if input.source_ref.is_some() || input.source_id.as_ref().is_some_and(|id| id != &relation.source_id) {
+            (relation.source_id, relation.source_ref) = crate::endpoints::input(&transaction, &relation.workspace_id, input.source_id, input.source_ref)?;
+        }
+        if input.target_ref.is_some() || input.target_id.as_ref().is_some_and(|id| id != &relation.target_id) {
+            (relation.target_id, relation.target_ref) = crate::endpoints::input(&transaction, &relation.workspace_id, input.target_id, input.target_ref)?;
+        }
         if let Some(value) = input.kind { relation.kind = value; }
         if let Some(value) = input.label { relation.label = value; }
         if let Some(value) = input.include_in_context { relation.include_in_context = value; }
         if let Some(value) = input.context_order { relation.context_order = value; }
         if input.claim.is_some() { relation.claim = input.claim; }
+        if let Some(claim) = relation.claim.as_mut() { claim.revision = previous.as_ref().map_or(1, |old| old.revision + 1); }
+        crate::claim::refresh(&transaction, &mut relation)?;
         validate_relation(&transaction, &relation)?;
-        transaction.execute("UPDATE relations SET source_id=?,target_id=?,kind=?,label=?,include_in_context=?,context_order=?,claim=? WHERE id=?", params![relation.source_id, relation.target_id, relation.kind, relation.label, relation.include_in_context, relation.context_order, relation.claim.as_ref().map(db::encode).transpose()?, relation.id])?;
+        transaction.execute("UPDATE relations SET source_id=?,target_id=?,kind=?,label=?,include_in_context=?,context_order=?,claim=?,source_ref=?,target_ref=? WHERE id=?", params![relation.source_id, relation.target_id, relation.kind, relation.label, relation.include_in_context, relation.context_order, relation.claim.as_ref().map(db::encode).transpose()?, relation.source_ref.as_ref().map(db::encode).transpose()?, relation.target_ref.as_ref().map(db::encode).transpose()?, relation.id])?;
         db::touch(&transaction, &relation.workspace_id)?;
         transaction.commit()?;
         Ok(relation)
@@ -281,45 +303,13 @@ pub async fn resolve_anchor(State(state): State<AppState>, Path(id): Path<String
     }).await?))
 }
 
-#[derive(Deserialize)]
-pub struct ContextInput {
-    pub question: String,
-    #[serde(default)] pub mode: ResearchMode,
-    #[serde(default)] pub document_ids: Vec<String>,
-    #[serde(default)] pub anchor_ids: Vec<String>,
-}
+pub use crate::context::ContextInput;
 
 pub async fn create_context(State(state): State<AppState>, Path(workspace_id): Path<String>, Json(input): Json<ContextInput>) -> Result<(StatusCode, Json<Context>)> {
-    if input.question.trim().is_empty() { return Err(ApiError::invalid("讨论问题不能为空")); }
-    if input.mode == ResearchMode::Rewrite && input.anchor_ids.len() != 1 { return Err(ApiError::invalid("改写模式需要一个精确选段")); }
     let prompt = state.config.prompts.get(&db::enum_name(&input.mode)?).cloned().ok_or_else(|| ApiError::internal("提示词配置缺失"))?;
     let result = state.db.call(move |connection| {
         let transaction = connection.transaction()?;
-        db::workspace(&transaction, &workspace_id)?;
-        let documents = db::documents(&transaction, &workspace_id)?;
-        let ordered = research::context_order(&input.document_ids, &documents, &db::relations(&transaction, &workspace_id)?)?;
-        let mut sources = Vec::new();
-        for id in &ordered {
-            let document = documents.iter().find(|document| &document.id == id).ok_or_else(|| ApiError::missing("上下文文稿"))?;
-            let question = document.metadata.get("question").and_then(Value::as_str);
-            let content = match question {
-                Some(question) => format!("问题：{question}\n回答：{}", document.content.body()),
-                None => document.content.body(),
-            };
-            sources.push(ContextSource { number: sources.len() + 1, document_id: id.clone(), version: document.current_version, title: document.title.clone(), content, anchor_id: None, anchor_status: None });
-        }
-        let mut anchor_ids = HashSet::new();
-        for id in &input.anchor_ids {
-            if !anchor_ids.insert(id) { continue; }
-            let anchor = db::anchor(&transaction, id)?;
-            if anchor.workspace_id != workspace_id { return Err(ApiError::invalid("引用片段属于其他工作区")); }
-            let source = db::version(&transaction, &anchor.document_id, anchor.version)?;
-            let current = db::document(&transaction, &anchor.document_id)?;
-            sources.push(ContextSource { number: sources.len() + 1, document_id: anchor.document_id.clone(), version: anchor.version, title: source.title, content: anchor.quote.clone(), anchor_id: Some(anchor.id.clone()), anchor_status: Some(research::resolve_anchor(&anchor, &current).status) });
-        }
-        let material = sources.iter().map(|source| format!("[来源{}] {}（文稿 {}，版本 {}）\n{}", source.number, source.title, source.document_id, source.version, source.content)).collect::<Vec<_>>().join("\n\n");
-        let messages = vec![Message { role: "system".into(), content: prompt }, Message { role: "user".into(), content: format!("来源材料：\n{material}\n\n用户要求：\n{}", input.question) }];
-        let context = Context { id: id(), workspace_id, mode: input.mode, question: input.question, document_ids: input.document_ids, anchor_ids: input.anchor_ids, ordered_document_ids: ordered, sources, character_count: messages.iter().map(|message| message.content.chars().count()).sum(), messages, created_at: now() };
+        let context = crate::context::build(&transaction, workspace_id, input, prompt, vec![], None)?;
         db::insert_context(&transaction, &context)?;
         transaction.commit()?;
         Ok(context)
@@ -332,8 +322,13 @@ pub async fn get_context(State(state): State<AppState>, Path(id): Path<String>) 
 }
 
 pub async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Run>> {
-    if let Some(control) = state.runs.lock().await.get(&id) { return Ok(Json(control.progress.borrow().run.clone())); }
-    Ok(Json(state.db.call(move |connection| db::run(connection, &id)).await?))
+    let live = state.runs.lock().await.get(&id).map(|control| control.progress.borrow().run.clone());
+    let mut run = match live {
+        Some(run) => run,
+        None => state.db.call(move |connection| db::run(connection, &id)).await?,
+    };
+    crate::math_text::normalize_run(&mut run);
+    Ok(Json(run))
 }
 
 pub async fn list_runs(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Run>>> {
@@ -346,6 +341,8 @@ pub async fn list_runs(State(state): State<AppState>, Path(id): Path<String>) ->
     for run in &mut runs {
         if let Some(control) = controls.get(&run.id) { *run = control.progress.borrow().run.clone(); }
     }
+    drop(controls);
+    for run in &mut runs { crate::math_text::normalize_run(run); }
     Ok(Json(runs))
 }
 
@@ -354,7 +351,7 @@ pub async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -
         control.cancel.cancel();
         return Ok(Json(control.progress.borrow().run.clone()));
     }
-    Ok(Json(state.db.call(move |connection| db::run(connection, &id)).await?))
+    get_run(State(state), Path(id)).await
 }
 
 pub async fn run_events(State(state): State<AppState>, Path(id): Path<String>) -> Result<Sse<impl futures_util::Stream<Item = std::result::Result<Event, Infallible>>>> {
@@ -366,7 +363,8 @@ pub async fn run_events(State(state): State<AppState>, Path(id): Path<String>) -
         drop(sender);
         receiver
     };
-    let stream = WatchStream::new(receiver).map(|progress| {
+    let stream = WatchStream::new(receiver).map(|mut progress| {
+        crate::math_text::normalize_run(&mut progress.run);
         // 结构中只有可序列化的 JSON 数据，失败时关闭连接并记录错误。
         let event = Event::default().event("progress").id(progress.sequence.to_string()).json_data(&progress);
         match event {
@@ -392,13 +390,7 @@ pub async fn apply_proposal(State(state): State<AppState>, Path(id): Path<String
         let anchor = db::anchor(&transaction, &proposal.anchor_id)?;
         let mut document = db::document(&transaction, &anchor.document_id)?;
         if document.current_version != input.expected_version { return Err(ApiError::conflict(document.current_version)); }
-        let location = research::resolve_anchor(&anchor, &document);
-        if !matches!(location.status, AnchorStatus::Exact | AnchorStatus::Relocated) { return Err(ApiError::invalid("原选段无法唯一定位，请重新选择原文并生成提案")); }
-        let block = document.content.blocks.iter_mut().find(|block| Some(&block.id) == location.block_id.as_ref()).ok_or_else(|| ApiError::missing("原文块"))?;
-        let start = research::utf16_to_byte(&block.text, location.start_utf16.ok_or_else(|| ApiError::internal("锚点偏移缺失"))?).ok_or_else(|| ApiError::internal("锚点偏移无效"))?;
-        block.text.replace_range(start..start + anchor.quote.len(), &proposal.replacement);
-        document.content.editor_state = None;
-        document.content.markdown = None;
+        research::replace_excerpt(&mut document, &anchor, &proposal.replacement)?;
         proposal.previous_version = Some(document.current_version);
         db::revise(&transaction, &mut document, input.expected_version, &format!("proposal:{}", proposal.id))?;
         proposal.status = ProposalStatus::Applied;

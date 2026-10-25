@@ -1,10 +1,18 @@
 mod api;
+mod canvas_proposal;
+mod canvas_output;
+mod claim;
 mod config;
+mod context;
 mod db;
+mod endpoints;
 mod error;
 mod model;
+mod math_text;
 mod provider;
 mod research;
+mod scene;
+mod scene_projection;
 mod transfer;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::{Duration, Instant}};
@@ -61,6 +69,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
     let routes = Router::new()
         .route("/health", get(api::health))
+        .route("/capabilities", get(scene::capabilities))
         .route("/models", get(provider::models))
         .route("/workspaces", get(api::list_workspaces).post(api::create_workspace))
         .route("/workspaces/import", post(transfer::import_archive))
@@ -73,25 +82,33 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/workspaces/{id}/canvases", post(api::create_canvas))
         .route("/canvases/{id}", get(api::get_canvas).put(api::update_canvas))
         .route("/workspaces/{id}/relations", post(api::create_relation))
-        .route("/relations/{id}", axum::routing::patch(api::update_relation).delete(api::delete_relation))
+        .route("/relations/{id}", get(claim::read).patch(api::update_relation).delete(api::delete_relation))
+        .route("/relations/{id}/review", post(claim::review))
         .route("/workspaces/{id}/anchors", post(api::create_anchor))
         .route("/anchors/{id}", get(api::get_anchor))
         .route("/anchors/{id}/resolve", get(api::resolve_anchor))
         .route("/workspaces/{id}/contexts", post(api::create_context))
+        .route("/workspaces/{id}/scene-contexts", post(scene::create_context))
         .route("/contexts/{id}", get(api::get_context))
         .route("/workspaces/{id}/runs", get(api::list_runs).post(provider::start_run))
         .route("/runs/{id}", get(api::get_run))
         .route("/runs/{id}/events", get(api::run_events))
         .route("/runs/{id}/cancel", post(api::cancel_run))
+        .route("/runs/{id}/recover-canvas-proposal", post(canvas_proposal::recover))
         .route("/proposals/{id}", get(api::get_proposal))
         .route("/proposals/{id}/apply", post(api::apply_proposal))
         .route("/proposals/{id}/revert", post(api::revert_proposal))
         .route("/proposals/{id}/reject", post(api::reject_proposal))
+        .route("/canvas-proposals/{id}", get(canvas_proposal::read).patch(canvas_proposal::edit))
+        .route("/canvas-proposals/{id}/apply", post(canvas_proposal::apply))
+        .route("/canvas-proposals/{id}/revert", post(canvas_proposal::revert))
+        .route("/canvas-proposals/{id}/reject", post(canvas_proposal::reject))
         .route("/workspaces/{id}/imports", post(transfer::import_file))
         .route("/assets/{id}", get(transfer::get_asset))
         .route("/workspaces/{id}/search", get(api::search))
         .route("/workspaces/{id}/export", get(transfer::export_json))
         .route("/workspaces/{id}/export.zip", get(transfer::export_zip))
+        .fallback(scene::api_not_found)
         .layer(middleware::from_fn_with_state(state.clone(), origin_guard))
         .layer(DefaultBodyLimit::max(state.config.max_request_bytes));
     let application = Router::new().nest("/api", routes).fallback_service(static_files)
@@ -101,8 +118,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     tracing::info!(address = %address, "Research Canvas 后端已启动");
     let stopping = state.shutdown.clone();
     axum::serve(listener, application).with_graceful_shutdown(async move {
+        #[cfg(unix)]
         let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("无法安装终止信号处理器");
-        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+        #[cfg(windows)]
+        let mut terminate = tokio::signal::windows::ctrl_break().expect("无法安装 Ctrl+Break 信号处理器");
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result.expect("无法接收 Ctrl+C 信号"),
+            _ = terminate.recv() => {},
+        }
         stopping.cancel();
     }).await?;
     for task in state.tasks.lock().await.drain(..) { task.await?; }

@@ -15,6 +15,10 @@ impl Db {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(include_str!("schema.sql"))?;
+        let has_canvas_proposal: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('runs') WHERE name='canvas_proposal_id')", [], |row| row.get(0))?;
+        if !has_canvas_proposal { connection.execute("ALTER TABLE runs ADD COLUMN canvas_proposal_id TEXT", [])?; }
+        let has_endpoints: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('relations') WHERE name='source_ref')", [], |row| row.get(0))?;
+        if !has_endpoints { connection.execute_batch(include_str!("migrations/research_endpoints.sql"))?; }
         connection.execute("UPDATE runs SET status='interrupted', error='服务进程中断，请根据已保存上下文重新发起', updated_at=? WHERE status IN ('queued','running')", [now()])?;
         Ok(Self(Arc::new(Mutex::new(connection))))
     }
@@ -158,20 +162,26 @@ pub fn insert_canvas(connection: &Connection, canvas: &Canvas) -> Result<()> {
 
 fn relation_row(row: &Row<'_>) -> rusqlite::Result<Relation> {
     let claim: Option<String> = row.get(8)?;
-    Ok(Relation { id: row.get(0)?, workspace_id: row.get(1)?, source_id: row.get(2)?, target_id: row.get(3)?, kind: row.get(4)?, label: row.get(5)?, include_in_context: row.get(6)?, context_order: row.get(7)?, claim: claim.map(parse).transpose()?, created_at: row.get(9)? })
+    let source: Option<String> = row.get(10)?;
+    let target: Option<String> = row.get(11)?;
+    Ok(Relation { id: row.get(0)?, workspace_id: row.get(1)?, source_id: row.get(2)?, target_id: row.get(3)?, kind: row.get(4)?, label: row.get(5)?, include_in_context: row.get(6)?, context_order: row.get(7)?, claim: claim.map(parse).transpose()?, created_at: row.get(9)?, source_ref: source.map(parse).transpose()?, target_ref: target.map(parse).transpose()? })
 }
 
 pub fn relation(connection: &Connection, id: &str) -> Result<Relation> {
-    Ok(connection.query_row("SELECT * FROM relations WHERE id=?", [id], relation_row)?)
+    let mut relation = connection.query_row("SELECT * FROM relations WHERE id=?", [id], relation_row)?;
+    crate::claim::refresh(connection, &mut relation)?;
+    Ok(relation)
 }
 
 pub fn relations(connection: &Connection, workspace_id: &str) -> Result<Vec<Relation>> {
     let mut statement = connection.prepare("SELECT * FROM relations WHERE workspace_id=? ORDER BY created_at,id")?;
-    Ok(statement.query_map([workspace_id], relation_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut relations = statement.query_map([workspace_id], relation_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for relation in &mut relations { crate::claim::refresh(connection, relation)?; }
+    Ok(relations)
 }
 
 pub fn insert_relation(connection: &Connection, relation: &Relation) -> Result<()> {
-    connection.execute("INSERT INTO relations VALUES (?,?,?,?,?,?,?,?,?,?)", params![relation.id, relation.workspace_id, relation.source_id, relation.target_id, relation.kind, relation.label, relation.include_in_context, relation.context_order, relation.claim.as_ref().map(encode).transpose()?, relation.created_at])?;
+    connection.execute("INSERT INTO relations VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", params![relation.id, relation.workspace_id, relation.source_id, relation.target_id, relation.kind, relation.label, relation.include_in_context, relation.context_order, relation.claim.as_ref().map(encode).transpose()?, relation.created_at, relation.source_ref.as_ref().map(encode).transpose()?, relation.target_ref.as_ref().map(encode).transpose()?])?;
     Ok(())
 }
 
@@ -205,7 +215,7 @@ pub fn insert_context(connection: &Connection, context: &Context) -> Result<()> 
 
 pub fn run_row(row: &Row<'_>) -> rusqlite::Result<Run> {
     let usage: Option<String> = row.get(7)?;
-    Ok(Run { id: row.get(0)?, workspace_id: row.get(1)?, context_id: row.get(2)?, model: row.get(3)?, status: enumeration(row.get(4)?)?, answer: row.get(5)?, model_used: row.get(6)?, usage: usage.map(parse).transpose()?, error: row.get(8)?, document_id: row.get(9)?, proposal_id: row.get(10)?, created_at: row.get(11)?, updated_at: row.get(12)? })
+    Ok(Run { id: row.get(0)?, workspace_id: row.get(1)?, context_id: row.get(2)?, model: row.get(3)?, status: enumeration(row.get(4)?)?, answer: row.get(5)?, model_used: row.get(6)?, usage: usage.map(parse).transpose()?, error: row.get(8)?, document_id: row.get(9)?, proposal_id: row.get(10)?, created_at: row.get(11)?, updated_at: row.get(12)?, canvas_proposal_id: row.get(13)? })
 }
 
 pub fn run(connection: &Connection, id: &str) -> Result<Run> {
@@ -213,12 +223,12 @@ pub fn run(connection: &Connection, id: &str) -> Result<Run> {
 }
 
 pub fn insert_run(connection: &Connection, run: &Run) -> Result<()> {
-    connection.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", params![run.id, run.workspace_id, run.context_id, run.model, enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.created_at, run.updated_at])?;
+    connection.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", params![run.id, run.workspace_id, run.context_id, run.model, enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.created_at, run.updated_at, run.canvas_proposal_id])?;
     Ok(())
 }
 
 pub fn update_run(connection: &Connection, run: &Run) -> Result<()> {
-    connection.execute("UPDATE runs SET status=?,answer=?,model_used=?,usage=?,error=?,document_id=?,proposal_id=?,updated_at=? WHERE id=?", params![enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.updated_at, run.id])?;
+    connection.execute("UPDATE runs SET status=?,answer=?,model_used=?,usage=?,error=?,document_id=?,proposal_id=?,updated_at=?,canvas_proposal_id=? WHERE id=?", params![enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.updated_at, run.canvas_proposal_id, run.id])?;
     Ok(())
 }
 
@@ -267,7 +277,9 @@ pub fn archive(connection: &Connection, workspace_id: &str) -> Result<WorkspaceA
     let asset_ids = assets_statement.query_map([workspace_id], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut assets = Vec::new();
     for id in asset_ids { assets.push(asset(connection, &id)?); }
-    Ok(WorkspaceArchive { format_version: 1, workspace: workspace(connection, workspace_id)?, documents, versions: all_versions, canvases: canvases(connection, workspace_id)?, relations: relations(connection, workspace_id)?, anchors: anchors(connection, workspace_id)?, contexts, runs, proposals, assets })
+    let mut canvas_statement = connection.prepare("SELECT payload FROM canvas_proposals WHERE workspace_id=? ORDER BY created_at,id")?;
+    let canvas_proposals = canvas_statement.query_map([workspace_id], |row| parse(row.get(0)?))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(WorkspaceArchive { format_version: 3, workspace: workspace(connection, workspace_id)?, documents, versions: all_versions, canvases: canvases(connection, workspace_id)?, relations: relations(connection, workspace_id)?, anchors: anchors(connection, workspace_id)?, contexts, runs, proposals, canvas_proposals, assets })
 }
 
 pub fn workspace_summary(connection: &Connection, workspace_id: &str) -> Result<Value> {
