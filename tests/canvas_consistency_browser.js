@@ -16,7 +16,9 @@ async ({ op, record }) => {
       note = entry.store.addBlock('affine:note', { xywh: '[650,0,420,240]', displayMode: 'edgeless' }, entry.store.root.id);
       entry.store.addBlock('affine:paragraph', { text: new Text(record.quote), type: 'text' }, note);
     }
-    session.addSourceLinks(canvas.id, [card], note);
+    const surface = entry.store.getModelsByFlavour('affine:surface')[0];
+    const linked = surface.getElementsByType('connector').some(link => link.source.id === card && link.target.id === note);
+    if (!linked) surface.addElement({ type: 'connector', mode: 2, source: { id: card }, target: { id: note }, stroke: '#8e6cdf', strokeStyle: 'solid', strokeWidth: 2 });
     await session.flushCanvas(canvas.id);
     if (session.canvasStatus(canvas.id).state !== 'saved') throw new Error(JSON.stringify(session.canvasStatus(canvas.id)));
     return { card_id: card, note_id: note };
