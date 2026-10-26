@@ -2,6 +2,14 @@ name: 发行包构建与验证
 
 on:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 发行平台
+        type: choice
+        default: macos
+        options:
+          - macos
+          - all
 
 permissions:
   contents: read
@@ -10,6 +18,8 @@ jobs:
   frontend:
     name: 编译发行界面
     runs-on: ubuntu-22.04
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
     env:
       YARN_ENABLE_GLOBAL_CACHE: 'false'
       YARN_CACHE_FOLDER: ${{ github.workspace }}/.runtime/yarn-cache
@@ -27,6 +37,9 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      - name: 选择发行平台
+        id: targets
+        run: python scripts/release_targets.py "${{ inputs.platforms }}" >> "$GITHUB_OUTPUT"
       - name: 安装锁定依赖并编译
         run: |
           node .yarn/releases/yarn-4.7.0.cjs install --immutable
@@ -49,31 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: windows-x64
-            runner: windows-2022
-            target: x86_64-pc-windows-msvc
-            executable: research-canvas.exe
-            extension: zip
-            rustflags: '-C target-feature=+crt-static'
-          - platform: macos-arm64
-            runner: macos-15
-            target: aarch64-apple-darwin
-            executable: research-canvas
-            extension: zip
-            rustflags: ''
-          - platform: macos-x64
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            executable: research-canvas
-            extension: zip
-            rustflags: ''
-          - platform: linux-x64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            executable: research-canvas
-            extension: tar.gz
-            rustflags: ''
+        include: ${{ fromJSON(needs.frontend.outputs.targets) }}
     defaults:
       run:
         shell: bash

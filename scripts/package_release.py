@@ -8,10 +8,11 @@ import tomllib
 import zipfile
 
 from collect_licenses import rust
+from release_targets import TARGETS
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLATFORMS = ["windows-x64", "macos-arm64", "macos-x64", "linux-x64"]
+PLATFORMS = [target["platform"] for target in TARGETS]
 
 
 def package(binary, platform):
@@ -47,10 +48,6 @@ def package(binary, platform):
         licenses = bundle / "licenses"
         licenses.mkdir()
         shutil.copy2(ROOT / "config/release/LICENSES.md", licenses / "README.md")
-        paths = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", "HEAD", "legal"], cwd=ROOT, text=True).splitlines()
-        for path in paths:
-            if path.endswith(".txt"):
-                (licenses / Path(path).name).write_bytes(subprocess.check_output(["git", "show", f"HEAD:{path}"], cwd=ROOT))
         frontend = (ROOT / ".runtime/frontend-licenses.txt").read_text(encoding="utf-8")
         (licenses / "DEPENDENCIES.txt").write_text(rust() + "\n" + frontend, encoding="utf-8")
         if platform == "linux-x64":

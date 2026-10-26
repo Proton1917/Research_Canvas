@@ -1,6 +1,6 @@
 # Research Canvas 安装与使用
 
-Research Canvas 0.1.0 提供 Windows、macOS 和 Linux 发行包。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
+Research Canvas 0.1.1 提供 macOS Apple Silicon 与 Intel 发行包，Windows 和 Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
 
 ## 下载与选择
 
@@ -9,11 +9,13 @@ Research Canvas 0.1.0 提供 Windows、macOS 和 Linux 发行包。发行包包�
 | 系统 | 发行文件 | 启动入口 |
 | --- | --- | --- |
 | Windows 10/11，x64 | `research-canvas-0.1.0-windows-x64.zip` | `start.cmd` |
-| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.0-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
-| macOS 13 及以上，Intel | `research-canvas-0.1.0-macos-x64.zip` | `Start.command` 或 `bash start.sh` |
+| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.1-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
+| macOS 13 及以上，Intel | `research-canvas-0.1.1-macos-x64.zip` | `Start.command` 或 `bash start.sh` |
 | Linux x64，glibc 2.35 及以上 | `research-canvas-0.1.0-linux-x64.tar.gz` | `bash start.sh` |
 
 macOS 的处理器信息位于“苹果菜单 → 关于本机”；显示 Apple M 系列时选 arm64，显示 Intel 时选 x64。Windows 可在“设置 → 系统 → 系统信息”查看系统类型。Linux 可运行 `uname -m` 查看，`x86_64` 对应 x64。
+
+macOS 安装包位于 [0.1.1 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.1)，Windows 与 Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
 
 GitHub 页面附带的 `Source code` 是开发源码压缩包。直接使用应用时，下载上表对应的发行文件。
 
@@ -138,6 +140,16 @@ bash start.sh
 
 升级前保存一份当前工作区的 JSON 或 ZIP 可恢复归档；已有适用归档时可复用。停止旧版服务，将新版完整解压到新目录，再复制旧目录的 `config/server.toml` 和 `.runtime/data/`。数据目录中的 SQLite 文件应在服务停止后整体复制。新版本启动时执行数据库迁移，确认工作区和文稿可读取后，再处理旧目录。
 
+从 0.1.0 升级并使用图像输入时，将新版 `config/server.example.toml` 中的输入设置补入旧配置的 `[provider]`。本机 Router 示例为：
+
+```toml
+max_input_characters = 240000
+vision_models = ["cc/gemini-3.8-flash-high"]
+max_input_image_bytes = 20971520
+```
+
+`vision_models` 填写服务实际支持图像输入的模型标识；两个上限分别按文本字符数和图像字节数计算。已有配置中的地址、凭据环境变量和模型选择继续沿用。
+
 归档恢复保留工作区标识。目标后端已存在同一标识时会返回 409；需要在空缺该工作区的后端实例中恢复。
 
 ## 常见问题
@@ -180,4 +192,4 @@ cargo build --release --locked
 .\target\release\research-canvas.exe
 ```
 
-各平台的发行包由同一源码提交构建。发行构建工作流会从解压后的目录启动应用，验证页面资源、文稿与 PDF 导入、JSON/ZIP 导出及停止服务。项目自有代码采用 MPL-2.0，发行包内的版权与许可告知位于 `licenses/`。
+同一版本的发行包由同一源码提交构建。发行构建工作流会从解压后的目录启动应用，验证页面资源、文稿与 PDF 导入、JSON/ZIP 导出及停止服务。项目自有代码采用 MPL-2.0，发行包内的依赖版权与许可告知位于 `licenses/`。
