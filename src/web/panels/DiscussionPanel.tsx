@@ -4,7 +4,7 @@ import { Button, QuietDotsWave, SegmentedControl, StreamingCursor, useScrollPinn
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  app, branchFrom, cancelRun, documentMap, loadContext, recoverCanvasRun, regenerateRun, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
+  app, branchFrom, cancelRun, documentMap, loadCanvasProposal, loadContext, recoverCanvasRun, regenerateRun, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
   sendComposer, setDialogs, setInheritMode, setModel, togglePicked, updateComposer, useApp,
 } from '../app/model';
 import { inheritedSources } from '../app/materials';
@@ -196,7 +196,6 @@ function Composer() {
  */
 function CanvasRecovery({ run }: { run: Run }) {
   const mode = useApp(state => state.contexts[run.context_id]?.mode);
-  const available = useApp(state => !!state.capabilities?.canvas_proposal_recovery);
   const [busy, setBusy] = useState<'recover' | 'regenerate' | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { if (!mode) void loadContext(run.context_id); }, [mode, run.context_id]);
@@ -206,7 +205,7 @@ function CanvasRecovery({ run }: { run: Run }) {
       <p className="text-ink-secondary">画布操作未生成提案。原输出已保存{run.answer ? '' : '（无正文）'}；可从原输出恢复，或用同一冻结上下文重新生成。</p>
       {error && <p role="alert" className="text-[var(--rc-bad)]">恢复失败：{error}</p>}
       <div className="flex flex-wrap gap-1.5">
-        {available && run.answer && run.status === 'failed' && (
+        {run.answer && run.status === 'failed' && (
           <Button size="xs" variant="primary" isLoading={busy === 'recover'} disabled={!!busy} onClick={async () => {
             setBusy('recover');
             setError(await recoverCanvasRun(run.id));
@@ -227,6 +226,9 @@ export function RunOutput({ run, compact = false }: { run: Run; compact?: boolea
   const doc = useApp(state => state.summary?.documents.find(item => item.id === run.document_id));
   const proposal = useApp(state => (run.proposal_id ? state.proposals[run.proposal_id] : undefined));
   const canvasProposal = useApp(state => (run.canvas_proposal_id ? state.canvasProposals[run.canvas_proposal_id] : undefined));
+  // 刷新后按提案的实际状态显示入口（待确认、已写入、已撤销或已拒绝）
+  const proposalLoaded = !!canvasProposal;
+  useEffect(() => { if (run.canvas_proposal_id && !proposalLoaded) void loadCanvasProposal(run.canvas_proposal_id); }, [run.canvas_proposal_id, proposalLoaded]);
   const live = run.status === 'queued' || run.status === 'running';
   const { containerRef, handleScroll, markUserInput, showJumpControl, scrollToBottom } = useScrollPinning([run.answer]);
   const tone = run.status === 'succeeded' ? 'ok' : run.status === 'failed' || run.status === 'interrupted' ? 'bad' : run.status === 'cancelled' ? 'warn' : 'clay';

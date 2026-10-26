@@ -211,6 +211,10 @@ export type ResearchContext = {
   inherited_context_ids?: string[];
   /** 冻结的画布场景（场景上下文） */
   scenes?: SceneSnapshot[];
+  /** 本轮直接选择材料时的文稿与画布版本；历史上下文为 null */
+  freshness?: { documents: Record<string, number>; canvases: Record<string, number> } | null;
+  /** 本轮的图像输入 */
+  visuals?: SceneVisual[];
   messages: ChatMessage[];
   character_count: number;
   created_at: string;
@@ -298,6 +302,15 @@ export type Capabilities = {
   frozen_inheritance?: boolean;
   canvas_proposals?: number | boolean;
   canvas_proposal_recovery?: number | boolean;
+  canvas_proposal_materialization?: number | boolean;
+  context_freshness?: number | boolean;
+  optional_canvas_actions?: number | boolean;
+  visual_inputs?: number | boolean;
+  /** 支持图像输入的已配置模型 */
+  vision_models?: string[];
+  /** 本机配置的文本字符上限与图像字节上限；null 表示采用上游限制 */
+  max_input_characters?: number | null;
+  max_input_image_bytes?: number | null;
   claim_research_plan?: number | boolean;
   relation_endpoints?: number | boolean;
   [key: string]: unknown;
@@ -325,13 +338,21 @@ export type SceneSnapshot = {
 };
 
 /** 前端投影与材料清单直接提交；materials 的 include 决定阅读范围。 */
+export type SceneVisual = { asset_id: string; object_ids: string[] };
+
 export type SceneContextRequest = {
   question: string;
   mode: 'discussion' | 'relation' | 'canvas';
   projection: unknown;
   materials: unknown[];
+  visuals?: SceneVisual[];
   write_scope?: WriteScope;
 };
+
+/** 上下文冻结后的材料版本变化（`GET /contexts/{id}/freshness` 与 409 stale_context 的详情） */
+export type ContextChange =
+  | { type: 'document'; id: string; expected_version: number; current_version: number }
+  | { type: 'canvas'; id: string; expected_revision: number; current_revision: number };
 
 export type ProposalEndpoint =
   | { type: 'document'; id: string }

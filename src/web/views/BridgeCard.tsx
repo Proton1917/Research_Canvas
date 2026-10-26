@@ -146,8 +146,11 @@ export function BridgeCard({ relation }: { relation: Relation }) {
   const [sourceInput, setSourceInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 结构对应、条件、反例、证据缺口等研究细节：已有内容时展开，空白候选只显示两端与说明
+  const [advanced, setAdvanced] = useState(() => filledDetails(base) > 0);
   useEffect(() => {
     const next = relation.claim ?? { ...emptyClaim, status: 'analogy' as ClaimStatus };
+    setAdvanced(filledDetails(next) > 0);
     setLabel(relation.label);
     setClaim(next);
     setOperations((next.preserved_operations ?? []).join('\n'));
@@ -262,6 +265,11 @@ export function BridgeCard({ relation }: { relation: Relation }) {
         <label htmlFor="bridge-label" className="text-[11px] font-medium text-ink-muted">联系标签</label>
         <input id="bridge-label" className="rc-input text-[13px]" value={label} onChange={event => setLabel(event.target.value)} />
       </div>
+      <details open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)} data-testid="bridge-details">
+        <summary className="rc-focus-ring cursor-pointer rounded text-[11px] font-medium text-ink-secondary">
+          研究细节 · 对应、运算、条件、出处、反例与验证{filledDetails({ ...claim, preserved_operations: preserved }) > 0 && ` · 已填 ${filledDetails({ ...claim, preserved_operations: preserved })} 项`}
+        </summary>
+        <div className="mt-2 space-y-3">
       <div className="space-y-1">
         <label htmlFor="bridge-mapping" className="text-[11px] font-medium text-ink-muted">对象对应及映射</label>
         <textarea id="bridge-mapping" rows={2} className="rc-input resize-y text-[13px]" placeholder="例如：基本解矩阵 Φ(t,t₀) ↔ 沿曲线的平行移动算子" value={claim.mapping ?? ''} onChange={event => setClaim({ ...claim, mapping: event.target.value })} />
@@ -324,10 +332,18 @@ export function BridgeCard({ relation }: { relation: Relation }) {
         <label htmlFor="bridge-next" className="text-[11px] font-medium text-ink-muted">下一步验证方法</label>
         <textarea id="bridge-next" rows={2} className="rc-input resize-y text-[13px]" placeholder="例如：在平坦联络下逐项比较 Chen 迭代积分与森林公式的系数" value={claim.next_validation ?? ''} onChange={event => setClaim({ ...claim, next_validation: event.target.value })} />
       </div>
+        </div>
+      </details>
       {error && <p role="alert" className="text-xs text-[var(--rc-bad)]">{error}</p>}
       <Button size="sm" variant="primary" disabled={!dirty} isLoading={saving} onClick={() => void save()}>保存研究内容</Button>
     </div>
   );
+}
+
+/** 已填写的研究细节项数 */
+export function filledDetails(claim: Claim) {
+  return [claim.mapping, claim.conditions, claim.counterexamples, claim.missing_proof, claim.next_validation].filter(item => item?.trim()).length
+    + ((claim.preserved_operations ?? []).length > 0 ? 1 : 0) + (claim.sources.length > 0 ? 1 : 0);
 }
 
 /** 画布中的学科桥浮层。打开时读取关系的当前复核状态。 */

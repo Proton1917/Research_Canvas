@@ -369,7 +369,7 @@
       "route": "/",
       "kind": "popover",
       "evidence": "observed",
-      "state": "多选想法卡与片段卡后在画布上提问：材料按正文/片段版本勾选，显示可写入的虚线区域；“在画布上创建”使用 mode=canvas，预览通过 scene-contexts 冻结投影",
+      "state": "选中对象后提问：默认回答方式为讨论框；材料默认只含明确选择的对象，附近对象、分组内容与整篇正文由用户加入；显示已冻结字符数与上限，可截取选区图像",
       "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（主数据库副本，后端为同一 Rust 服务，模型 cc/gemini-3.8-flash-high）实测，材料为 docs/Research_Canvas_conversation_2026-10-25.pdf。预览返回 2 项来源，阅读范围与所选一致。"
     },
     {
@@ -437,6 +437,138 @@
       "evidence": "observed",
       "state": "失败的画布运行提供“从原输出恢复提案”与“按原上下文重新生成”；内容无效时显示具体格式错误，原输出保留",
       "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端为当前版本，模型 cc/gemini-3.8-flash-high）实测。两条历史失败运行恢复时分别返回未知字段与非法转义；按原上下文重新生成得到提案 8f2b66e1，并在画布版本变化后按当前画布确认写入。"
+    },
+    {
+      "id": "link_views",
+      "title": "连线只保存视图",
+      "image": "screenshots/link_views-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "画线、改接、删线只改变本画布的 link_views；研究关系集合保持不变",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。画线后 link_views 新增未绑定视图，改接后端点更新，删线后视图移除；三步前后关系均为 17 条。删除已绑定连线后关系保留并记入 hidden_relations。"
+    },
+    {
+      "id": "relate_candidate",
+      "title": "研究这个联系",
+      "image": "screenshots/relate_candidate-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "选中未绑定连线后填写一句说明，“建立候选联系”以 candidate 状态创建关系并绑定该连线",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。关系 9c2ef7c2 的 label 为输入的说明，claim.status=candidate，link_views 绑定该关系。"
+    },
+    {
+      "id": "bridge_details",
+      "title": "研究细节渐进展开",
+      "image": "screenshots/bridge_details-image-0.png",
+      "group": "关系",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "学科桥先显示两端、状态与说明；对应、运算、条件、出处、反例、证明缺口与验证方法收在“研究细节”中，有内容时默认展开",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。空白候选关系的细节默认收起；展开后填写尚缺论证并保存，状态仍为候选。"
+    },
+    {
+      "id": "ask_refreeze",
+      "title": "发送前重新冻结",
+      "image": "screenshots/ask_refreeze-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "预览后在展开编辑中修改原文，发送时先保存文稿（v3→v4）再建立新上下文；回答作为可编辑讨论框放在写入区域",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。预览上下文不含修改，发送上下文含修改且 freshness 记录 v4；请求顺序为 PATCH 文稿 → scene-contexts → runs。默认回答方式为讨论框。"
+    },
+    {
+      "id": "ask_stale",
+      "title": "材料在冻结后被他人修改",
+      "image": "screenshots/ask_stale-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "409 stale_context 时保留问题、勾选与选择，列出变化对象（如「证据新鲜度」v5→v6），载入新版本后重新冻结，再次发送成功",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。两个浏览器客户端：客户端二在客户端一预览后修改同一想法；客户端一再次发送得到采用新口径的回答。"
+    },
+    {
+      "id": "canvas_stale",
+      "title": "画布在冻结后被他人修改",
+      "image": "screenshots/canvas_stale-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "画布 revision 变化（r23→r24）时按服务端画布重建本地画布，重新投影后再次发送",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。客户端一的画布显示客户端二移动后的位置；重建过程无页面错误。"
+    },
+    {
+      "id": "canvas_conflict",
+      "title": "两个客户端的画布冲突",
+      "image": "screenshots/canvas_conflict-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "落后的客户端保存画布得到 409，显示“版本冲突”，可载入服务器版本或保留本地内容",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。载入服务器版本后状态恢复为已保存，无页面错误。"
+    },
+    {
+      "id": "proposal_materialized",
+      "title": "提案由后端物化",
+      "image": "screenshots/proposal_materialized-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "确认写入只提交 expected_revision 与 expected_canvas_revision，采用响应中的完整画布；响应丢失时读取提案状态并以幂等确认取回结果",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。首次 apply 的响应在途中断开：前端 GET 提案为 applied 后重复 apply，画布只前进一次（r25→r26），新增 1 条候选关系；刷新后 11 张卡片与连线保持。"
+    },
+    {
+      "id": "proposal_reverted",
+      "title": "刷新后整组撤销",
+      "image": "screenshots/proposal_reverted-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "刷新后运行记录按提案实际状态显示“查看已写入的画布操作”；撤销后画布 r27，新建框与候选关系移除",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。提案状态 reverted，再次刷新后仍为 10 张卡片。"
+    },
+    {
+      "id": "ask_visual",
+      "title": "局部图像读取",
+      "image": "screenshots/ask_visual-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "截取选区图像保存为工作区资产，请求附 visuals:[{asset_id, object_ids}]；正文未勾选时模型只从图像读取",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。上下文只含卡片定位与截图（正文未提交），模型从图像读出第二个小标题“跨学科例子”与两条公式。"
+    },
+    {
+      "id": "ask_history",
+      "title": "历史来源恢复",
+      "image": "screenshots/ask_history-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "选中讨论卡时列出其冻结来源（原整篇 v4），按该版本而非当前 v6 读取",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。上下文来源为「证据新鲜度」v4，包含 v4 文字，不含 v6 才有的修改。"
+    },
+    {
+      "id": "ask_budget",
+      "title": "文字预算超限",
+      "image": "screenshots/ask_budget-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "context_budget_exceeded 时显示总字符数、上限和各来源长度，问题与勾选保留",
+      "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。验证实例临时把 max_input_characters 设为 800 实测，测后恢复 240000。"
     }
   ],
   "edges": [
@@ -740,16 +872,85 @@
       "to": "canvas_proposal",
       "action": "恢复成功 / 按原上下文重新生成",
       "evidence": "observed"
+    },
+    {
+      "from": "connector",
+      "to": "link_views",
+      "action": "画线 / 改接 / 删线",
+      "evidence": "observed"
+    },
+    {
+      "from": "link_views",
+      "to": "relate_candidate",
+      "action": "选中连线 · 研究这个联系",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "relate_candidate",
+      "to": "bridge_details",
+      "action": "建立候选联系 · 展开研究细节",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_refreeze",
+      "action": "预览后修改原文 · 发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_stale",
+      "action": "他人修改材料后发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "canvas_stale",
+      "action": "他人修改画布后发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "canvas_conflict",
+      "action": "另一客户端已保存后再保存",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_proposal",
+      "to": "proposal_materialized",
+      "action": "确认写入（响应中断）",
+      "evidence": "observed"
+    },
+    {
+      "from": "proposal_materialized",
+      "to": "proposal_reverted",
+      "action": "刷新 · 运行记录 · 撤销本次写入",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_visual",
+      "action": "截取选区图像 · 发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_history",
+      "action": "选中讨论卡",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_budget",
+      "action": "勾选材料超出上限",
+      "evidence": "observed"
     }
   ],
   "pending": [
     {
       "title": "中文输入法组合输入",
       "reason": "自动化浏览器无法驱动系统输入法；输入框按 isComposing 跳过回车发送，已从源码确认，未做真机 IME 操作。"
-    },
-    {
-      "title": "图片与 Markdown/文本导入",
-      "reason": "本轮实测了 PDF 导入；其他格式共用同一导入入口，未逐一操作。"
     },
     {
       "title": "带依赖的撤销提示",
@@ -762,7 +963,15 @@
     {
       "title": "从原输出恢复成功",
       "reason": "验证库中剩余的失败运行均为内容错误，恢复接口正确拒绝；没有可恢复的围栏输出样本，恢复成功后打开提案的路径未实际触发。"
+    },
+    {
+      "title": "vision_unsupported 与 image_budget_exceeded",
+      "reason": "本机只配置了一个且支持视觉的模型、图像上限 20MB，未能触发；界面按 vision_models 提示改用视觉模型，两种错误按服务返回的说明显示。"
+    },
+    {
+      "title": "图片文稿的视觉材料",
+      "reason": "本轮实测了选区截图；画布中图片文稿的“以图像读取”材料共用同一 visuals 路径，未单独操作。"
     }
   ],
-  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。"
+  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。 交接任务节点（link_views、relate_candidate、bridge_details、ask_*、canvas_stale、canvas_conflict、proposal_materialized、proposal_reverted）来自 2026-10-25 对后端 6bc427f 的实测。"
 }

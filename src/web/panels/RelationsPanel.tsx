@@ -10,7 +10,7 @@ import {
 import { useSession } from '../app/useSession';
 import { AnchorStatusChip, Chip, EmptyState, KindIcon, SectionTitle } from '../components/common';
 import { CLAIM_STATUS_LABEL, excerpt } from '../lib/format';
-import { Endpoint } from '../views/BridgeCard';
+import { Endpoint, filledDetails } from '../views/BridgeCard';
 
 /** 面板内可直接设置的状态；有支持、已确立、被反驳需在学科桥中附证据人工确认。 */
 const STATUSES: { id: ClaimStatus; label: string }[] = [
@@ -106,7 +106,11 @@ function RelationEditor({ relation }: { relation: Relation }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  useEffect(() => { setDraft(toDraft(relation)); setError(null); setConfirmDelete(false); }, [relation]);
+  const [advanced, setAdvanced] = useState(() => !!relation.claim && filledDetails(relation.claim) > 0);
+  useEffect(() => {
+    setDraft(toDraft(relation)); setError(null); setConfirmDelete(false);
+    setAdvanced(!!relation.claim && filledDetails(relation.claim) > 0);
+  }, [relation]);
 
   const dirty = JSON.stringify(toDraft(relation)) !== JSON.stringify(draft);
   // 片段与想法端点不可在此改为文稿；端点文稿用于出处候选和 AI 分析材料
@@ -194,6 +198,12 @@ function RelationEditor({ relation }: { relation: Relation }) {
           ? <SegmentedControl ariaLabel="关系状态" size="sm" items={STATUSES} value={draft.claim.status} onChange={status => patchClaim({ status })} />
           : <p className="flex items-center gap-1.5 text-xs"><Chip tone="ok">{CLAIM_STATUS_LABEL[draft.claim.status]}</Chip><span className="text-ink-muted">状态变更在学科桥中附证据确认</span></p>}
         {relation.claim?.review_required && <p className="text-[11px] text-[var(--rc-warn)]">待复核：来源或研究内容已变化，原判断保留。</p>}
+        <details open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)} data-testid="relation-details">
+          <summary className="rc-focus-ring cursor-pointer rounded text-[11px] font-medium text-ink-secondary">
+            研究细节 · 条件、反例与出处{filledDetails(draft.claim) > 0 && ` · 已填 ${filledDetails(draft.claim)} 项`}
+          </summary>
+          <div className="mt-2 space-y-2">
+        <p className="text-[11px] text-ink-muted">结构对应、保持运算、证明缺口与验证方法在画布的学科桥中编辑。</p>
         <textarea aria-label="成立条件" rows={2} className="rc-input resize-y text-[13px]" placeholder="成立条件：在什么假设、尺度或范围内对应成立" value={draft.claim.conditions} onChange={event => patchClaim({ conditions: event.target.value })} />
         <textarea aria-label="反例" rows={2} className="rc-input resize-y text-[13px]" placeholder="反例或失效情形" value={draft.claim.counterexamples} onChange={event => patchClaim({ counterexamples: event.target.value })} />
         <div className="space-y-1.5">
@@ -223,6 +233,8 @@ function RelationEditor({ relation }: { relation: Relation }) {
             <Button size="sm" variant="secondary" icon={<PlusIcon width={14} height={14} />} onClick={() => { addSource(sourceInput); setSourceInput(''); }}>添加</Button>
           </div>
         </div>
+          </div>
+        </details>
       </div>
       <label className="flex items-center gap-2 text-xs text-ink">
         <input type="checkbox" className="accent-[var(--cds-clay)]" checked={draft.include_in_context} onChange={event => setDraft({ ...draft, include_in_context: event.target.checked })} />

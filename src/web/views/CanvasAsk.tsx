@@ -1,10 +1,11 @@
 // 画布就近提问：选择对象 → 材料与写入范围预览 → 发送 → 讨论框放在所选对象附近。
-import { CloseIcon, SendIcon, ViewIcon } from '@blocksuite/icons/rc';
+import { CloseIcon, ImageIcon, PlusIcon, SendIcon, ViewIcon } from '@blocksuite/icons/rc';
 import { Button, SegmentedControl } from '@ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  capabilityOn, type CanvasAsk, closeAsk, previewAsk, sendAsk, toggleAskMaterial, updateAsk, useApp,
+  addNeighborsToAsk, type AskProblem, type CanvasAsk, captureAskRegion, closeAsk, documentById, previewAsk, removeAskVisual,
+  sendAsk, setModel, staleSummary, toggleAskMaterial, updateAsk, useApp,
 } from '../app/model';
 import type { Material, MaterialGroup } from '../app/materials';
 import { Chip } from '../components/common';
@@ -14,12 +15,15 @@ import { parseProposalDraft } from './CanvasProposal';
 const GROUP_LABEL: Record<MaterialGroup, string> = {
   body: '将提交的正文',
   history: '历史来源（父讨论冻结材料）',
+  visual: '图像（由视觉模型读取）',
   locate: '仅供定位：位置、分组与连线',
 };
 
-/** legacyOnly：服务只接收片段与文稿时显示各项的提交限制。 */
-function MaterialRow({ material, legacyOnly }: { material: Material; legacyOnly: boolean }) {
-  const blocked = !material.legacy;
+const GROUP_ORDER: MaterialGroup[] = ['body', 'visual', 'history', 'locate'];
+
+const formatBytes = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+function MaterialRow({ material }: { material: Material }) {
   return (
     <li className="flex items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-[var(--cds-fill-ghost-hover)]">
       <input
@@ -32,12 +36,31 @@ function MaterialRow({ material, legacyOnly }: { material: Material; legacyOnly:
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[12.5px] text-ink" title={material.label}>{material.label}</span>
         <span className="block truncate text-[11px] text-ink-muted" title={material.detail}>{material.detail}</span>
-        {material.include && legacyOnly && material.caveat && <span className="block text-[11px] text-[var(--rc-warn)]">{material.caveat}</span>}
-        {material.include && legacyOnly && blocked && material.needsScene && <span className="block text-[11px] text-ink-muted">{material.needsScene}</span>}
       </span>
       {material.version != null && <Chip className="shrink-0">v{material.version}</Chip>}
     </li>
   );
+}
+
+/** 服务拒绝发送的原因：变化的对象、超出预算的来源或图像限制。 */
+function ProblemDetail({ problem }: { problem: AskProblem }) {
+  switch (problem.type) {
+    case 'stale':
+      return <p>冻结后有变化：{staleSummary(problem.changes) || '材料版本已更新'}。</p>;
+    case 'budget':
+      return (
+        <>
+          <p>文字共 {problem.count.toLocaleString()} 字符，超过上限 {problem.limit.toLocaleString()}。请取消勾选较长的来源：</p>
+          <ul className="mt-0.5 list-disc pl-4">
+            {[...problem.sources].sort((a, b) => b.character_count - a.character_count).map(source => (
+              <li key={source.number}>[{source.number}] {documentById(source.document_id)?.title || source.document_id} · {source.character_count.toLocaleString()} 字符</li>
+            ))}
+          </ul>
+        </>
+      );
+    default:
+      return <p>{problem.message}</p>;
+  }
 }
 
 /** 画布操作生成中：JSON 草稿按接收进度显示分析正文与候选标题。 */
@@ -83,10 +106,12 @@ export function WriteRegion({ ask, toView, zoom }: { ask: CanvasAsk; toView: (x:
 export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: number; top: number }) {
   const run = useApp(state => (ask.runId ? state.runs.find(item => item.id === ask.runId) : undefined));
   const connection = useApp(state => state.connection);
-  const checked = useApp(state => state.capabilitiesChecked);
-  const capabilities = useApp(state => state.capabilities);
-  const sceneReady = capabilityOn(capabilities, 'scene_context');
-  const proposalsReady = capabilityOn(capabilities, 'canvas_proposals');
+  const { visionModels, maxCharacters, maxImageBytes } = useApp(state => ({
+    visionModels: (state.capabilities?.vision_models ?? []).join('\n'),
+    maxCharacters: state.capabilities?.max_input_characters ?? null,
+    maxImageBytes: state.capabilities?.max_input_image_bytes ?? null,
+  }));
+  const model = useApp(state => state.model);
   const [showAll, setShowAll] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { textarea.current?.focus(); }, [ask.ids.join(',')]);
@@ -94,11 +119,13 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
   const groups = useMemo(() => {
     const map = new Map<MaterialGroup, Material[]>();
     for (const material of ask.materials) map.set(material.group, [...(map.get(material.group) ?? []), material]);
-    return (['body', 'history', 'locate'] as MaterialGroup[]).filter(group => map.has(group)).map(group => ({ group, items: map.get(group)! }));
+    return GROUP_ORDER.filter(group => map.has(group)).map(group => ({ group, items: map.get(group)! }));
   }, [ask.materials]);
   const included = ask.materials.filter(item => item.include);
-  const transferable = included.filter(item => item.legacy).length;
-  const sceneOnly = included.filter(item => !item.legacy).length;
+  const imageCount = included.filter(item => item.group === 'visual').length + ask.visuals.length;
+  const vision = visionModels ? visionModels.split('\n') : [];
+  const blind = imageCount > 0 && !vision.includes(model);
+  const characters = ask.context?.character_count ?? null;
   const live = run && (run.status === 'queued' || run.status === 'running');
 
   return (
@@ -120,12 +147,9 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
         <SegmentedControl
           ariaLabel="回答方式"
           size="sm"
-          items={[{ id: 'canvas', label: '在画布上创建' }, { id: 'discussion', label: '讨论框' }]}
+          items={[{ id: 'discussion', label: '讨论框' }, { id: 'canvas', label: '在画布上创建' }]}
           value={ask.mode}
-          onChange={mode => {
-            if (mode === 'canvas' && !proposalsReady) return;
-            updateAsk({ mode: mode as 'canvas' | 'discussion', context: null, contextKey: null });
-          }}
+          onChange={mode => updateAsk({ mode: mode as 'canvas' | 'discussion', context: null, contextKey: null })}
         />
         <textarea
           ref={textarea}
@@ -148,11 +172,39 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           {groups.map(({ group, items }) => (
             <div key={group} className="mb-1.5">
               <p className="px-1.5 text-[11px] font-medium text-ink-secondary">{GROUP_LABEL[group]}</p>
-              <ul>{(showAll ? items : items.slice(0, 5)).map(item => <MaterialRow key={item.key} material={item} legacyOnly={!sceneReady} />)}</ul>
+              <ul>{(showAll ? items : items.slice(0, 5)).map(item => <MaterialRow key={item.key} material={item} />)}</ul>
               {!showAll && items.length > 5 && <p className="px-1.5 text-[11px] text-ink-muted">另有 {items.length - 5} 项</p>}
             </div>
           ))}
+          {ask.visuals.length > 0 && (
+            <div className="mb-1.5" data-testid="ask-visuals">
+              <p className="px-1.5 text-[11px] font-medium text-ink-secondary">选区截图（由视觉模型读取）</p>
+              {included.length === 0 && <p className="px-1.5 text-[11px] text-[var(--rc-warn)]">截图关联本轮选入的对象：请至少保留一项所选对象的材料（如定位或想法）。</p>}
+              <ul>
+                {ask.visuals.map(visual => (
+                  <li key={visual.asset_id} className="flex items-center gap-2 rounded-lg px-1.5 py-1">
+                    <img src={visual.url} alt="" className="size-9 shrink-0 rounded border border-line object-cover" />
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink" title={visual.label}>{visual.label}</span>
+                    <Chip className={maxImageBytes != null && visual.bytes > maxImageBytes ? 'text-[var(--rc-bad)]' : 'shrink-0'}>{formatBytes(visual.bytes)}</Chip>
+                    <Button size="icon-sm" variant="ghost" aria-label={`移除截图：${visual.label}`} icon={<CloseIcon width={14} height={14} />} onClick={() => removeAskVisual(visual.asset_id)} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5 px-1">
+            <Button size="xs" variant="outline" icon={<PlusIcon width={14} height={14} />} disabled={!!ask.busy} onClick={addNeighborsToAsk}>加入附近对象</Button>
+            <Button size="xs" variant="outline" icon={<ImageIcon width={14} height={14} />} isLoading={ask.busy === 'capture'} disabled={!!ask.busy} onClick={() => void captureAskRegion()}>截取选区图像</Button>
+          </div>
         </div>
+        {blind && (
+          <div className="rounded-lg border border-[var(--rc-warn)]/50 px-2.5 py-2 text-[11px] text-ink-secondary" data-testid="ask-vision">
+            <p>本次附带 {imageCount} 张图像，当前模型 <span className="font-mono">{model || '默认模型'}</span> 不读取图像。</p>
+            {vision.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-1">{vision.map(id => <Button key={id} size="xs" variant="secondary" onClick={() => setModel(id)}>改用 {id}</Button>)}</div>
+            ) : <p>服务没有配置视觉模型；请取消图像后发送。</p>}
+          </div>
+        )}
         <div className="rounded-lg bg-[var(--cds-alpha-1)] px-2.5 py-2 text-[11px] text-ink-secondary">
           <p className="font-medium text-ink">本次允许写入</p>
           {ask.region ? (
@@ -161,15 +213,23 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           <p className="mt-1">
             {ask.mode === 'canvas'
               ? '允许新建框、公式与候选联系；生成内容先作为候选显示，确认后才写入，可整组撤销。'
-              : proposalsReady ? '生成的讨论框放在此区域，与来源保持连线。' : '画布提案接口未接通；本次只写入讨论框，与来源保持连线。'}
+              : '回答作为可编辑的讨论框放在此区域，与来源保持连线。'}
           </p>
         </div>
-        <div className="rounded-lg border border-line px-2.5 py-2 text-[11px] text-ink-secondary" data-testid="ask-capability">
-          {!checked ? '正在读取服务能力…' : sceneReady
-            ? <>场景上下文已接通：提交所选对象的投影与 {included.length} 项勾选材料（正文、片段版本、位置、连线与分组），服务冻结后返回实际消息。</>
-            : <>当前服务仅接收片段与文稿：本次提交 <b className="text-ink">{transferable}</b> 项；位置、连线、关系记录与画布内文字等 <b className="text-ink">{sceneOnly}</b> 项需要场景上下文接口，不会发送。</>}
+        <div className="rounded-lg border border-line px-2.5 py-2 text-[11px] text-ink-secondary" data-testid="ask-budget">
+          {characters != null ? (
+            <p>
+              已冻结：文字 <b className={maxCharacters != null && characters > maxCharacters ? 'text-[var(--rc-bad)]' : 'text-ink'}>{characters.toLocaleString()}</b>
+              {maxCharacters != null && <> / {maxCharacters.toLocaleString()}</>} 字符{imageCount > 0 && <>，图像 {imageCount} 张</>}。发送前会保存相关文稿与画布并重新冻结。
+            </p>
+          ) : <p>发送前保存相关文稿与画布，按勾选的 {included.length} 项材料{imageCount > 0 && `与 ${imageCount} 张图像`}冻结本轮阅读{maxCharacters != null && `；文字上限 ${maxCharacters.toLocaleString()} 字符`}。</p>}
         </div>
-        {ask.error && <p role="alert" className="text-xs text-[var(--rc-bad)]">{ask.error}</p>}
+        {(ask.error || ask.problem) && (
+          <div role="alert" className="space-y-0.5 text-xs text-[var(--rc-bad)]" data-testid="ask-problem">
+            {ask.error && <p>{ask.error}</p>}
+            {ask.problem && <ProblemDetail problem={ask.problem} />}
+          </div>
+        )}
         {run && ask.mode === 'canvas' && live ? (
           <DraftProgress answer={run.answer} />
         ) : run && <RunOutput run={run} compact />}
@@ -181,7 +241,7 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           {ask.context ? '查看上下文' : '预览上下文'}
         </Button>
         <span className="flex-1" />
-        <Button size="sm" variant="primary" icon={<SendIcon width={16} height={16} />} isLoading={ask.busy === 'send' || !!live} disabled={!ask.question.trim() || !!ask.busy || !!live || connection !== 'online' || (!sceneReady && transferable === 0)} title={!sceneReady && transferable === 0 ? '没有可由当前服务接收的材料' : undefined} onClick={() => void sendAsk()}>
+        <Button size="sm" variant="primary" icon={<SendIcon width={16} height={16} />} isLoading={ask.busy === 'send' || !!live} disabled={!ask.question.trim() || !!ask.busy || !!live || connection !== 'online' || included.length === 0} title={included.length === 0 ? '请至少勾选一项材料' : undefined} onClick={() => void sendAsk()}>
           发送
         </Button>
       </div>

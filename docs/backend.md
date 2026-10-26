@@ -104,4 +104,4 @@ conda run --no-capture-output -n base python tests/backend_acceptance.py router
 
 上下文验证覆盖原文更新后的旧预览拒绝、重新冻结的新版本，以及历史来源保留。纯 `answer` 工具输出保存为讨论文稿。视觉运行发送 PDF 第四页图像，模型读取其中的验收表，响应标识为 `gemini-3.8-flash-n`。模型调用均经过本机 Router 的 `cc/gemini-3.8-flash-high`。工作区导出到 8792 空数据库后逐字段读回一致，包含图像引用及来源版本。
 
-前端界面的默认讨论、显式建立联系、发送前刷新材料和图像选择按 `docs/frontend-handoff.md` 接入。前端交互验收由 Opus 5.5 负责。
+前端已接入默认讨论、显式建立联系、发送前刷新材料和图像选择。8790 独立实例的交互验收记录见 [frontend.md](frontend.md)，涵盖并发修改后的重新冻结、响应中断恢复、刷新与整组撤销。

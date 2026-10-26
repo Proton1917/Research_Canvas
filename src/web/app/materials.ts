@@ -1,9 +1,9 @@
-// 画布场景 → 材料清单。区分将提交的正文、历史来源、仅供定位的信息，
-// 并标注每项能否通过当前已实现的上下文接口（document_ids / anchor_ids）提交。
+// 画布场景 → 材料清单。区分将提交的正文、历史来源、图像与仅供定位的信息。
+// 默认只读取明确选中的对象；随分组或框纳入的对象、整篇正文与图像由用户选择加入。
 import type { Anchor, ContextSource, ResearchContext, ResearchDocument } from '@research';
 import type { SceneObject, SceneProjection } from '@research/editor';
 
-export type MaterialGroup = 'body' | 'history' | 'locate';
+export type MaterialGroup = 'body' | 'history' | 'visual' | 'locate';
 
 export type Material = {
   key: string;
@@ -14,15 +14,11 @@ export type Material = {
   version: number | null;
   /** 默认是否选入 */
   include: boolean;
-  /** 可由现有上下文接口提交的引用 */
+  /** 内容引用：片段按锚点、整篇按文稿读取（场景接口字段名） */
   legacy: { anchor_id: string } | { document_id: string } | null;
-  /** 现有接口提交该项时的已知偏差 */
-  caveat?: string;
-  /** 需要场景契约才能提交的原因 */
-  needsScene?: string;
+  /** 视觉材料对应的工作区图像资产 */
+  asset_id?: string;
 };
-
-const SCENE_ONLY = '需要场景上下文接口（尚未接通）';
 
 /** 期望进入上下文的材料身份：对象类型、内容标识、版本与片段共同确定。 */
 export type ExpectedSource = { document_id: string; version: number | null; anchor_id: string | null; origin: string };
@@ -43,6 +39,8 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
 
   for (const object of projection.objects) {
     const via = object.via ? '（随分组或框纳入）' : '';
+    // 明确选中的对象默认读取；随分组或框纳入的对象由用户勾选
+    const direct = !object.via;
     switch (object.kind) {
       case 'fragment': {
         if (object.ref.type !== 'anchor') break;
@@ -50,7 +48,7 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
         push({
           key: `anchor:${object.ref.anchor_id}`, group: 'body', objectId: object.instance_id, label: `片段「${object.text.slice(0, 60)}」`,
           detail: `${doc?.title ?? '文稿'} · 版本 ${object.ref.version}${object.ref.page != null ? ` · 第 ${object.ref.page} 页` : ''}${via}`,
-          version: object.ref.version, include: true, legacy: { anchor_id: object.ref.anchor_id },
+          version: object.ref.version, include: direct, legacy: { anchor_id: object.ref.anchor_id },
         });
         break;
       }
@@ -58,13 +56,12 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
         if (object.ref.type === 'document') {
           push({
             key: `doc:${object.ref.document_id}`, group: 'body', objectId: object.instance_id, label: `想法「${object.text.slice(0, 60) || object.title}」`,
-            detail: `想法文稿 · 版本 ${object.ref.version}${via}`, version: object.ref.version, include: true, legacy: { document_id: object.ref.document_id },
-            caveat: '当前服务读取该文稿的当前版本',
+            detail: `想法文稿 · 版本 ${object.ref.version}${via}`, version: object.ref.version, include: direct, legacy: { document_id: object.ref.document_id },
           });
         } else {
           push({
             key: `idea:${object.instance_id}`, group: 'body', objectId: object.instance_id, label: `${object.title}「${object.text.slice(0, 60) || '空白'}」`,
-            detail: `画布对象 ${object.flavour}${via}`, version: null, include: !!object.text.trim(), legacy: null, needsScene: SCENE_ONLY,
+            detail: `画布对象 ${object.flavour}${via}`, version: null, include: direct && !!object.text.trim(), legacy: null,
           });
         }
         break;
@@ -73,14 +70,14 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
         if (object.ref.type !== 'document') break;
         const documentId = object.ref.document_id;
         push({
-          key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id, label: `文稿卡片「${object.title}」`,
-          detail: `版本 ${object.ref.version} · ${position(object)}${via}`, version: object.ref.version, include: true, legacy: null, needsScene: SCENE_ONLY,
+          key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id,
+          label: `${object.ref.kind === 'pdf' ? 'PDF' : '文稿'}卡片「${object.title}」`,
+          detail: `版本 ${object.ref.version} · ${position(object)}${via}`, version: object.ref.version, include: direct, legacy: null,
         });
-        // 整篇正文由用户另行选择
+        // 默认只提供身份与定位；整篇正文由用户另行选择，PDF 按选段或显式全文展开
         push({
           key: `doc:${documentId}`, group: 'body', objectId: object.instance_id, label: `整篇「${object.title}」`,
-          detail: `版本 ${object.ref.version}（整篇阅读）`, version: object.ref.version, include: false, legacy: { document_id: documentId },
-          caveat: '整篇正文按当前版本读取',
+          detail: `版本 ${object.ref.version}（整篇阅读${object.ref.kind === 'pdf' ? '，含全部页面' : ''}）`, version: object.ref.version, include: false, legacy: { document_id: documentId },
         });
         for (const anchor of anchors.filter(item => item.document_id === documentId)) {
           push({
@@ -95,8 +92,7 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
         if (object.ref.type !== 'document') break;
         push({
           key: `doc:${object.ref.document_id}`, group: 'body', objectId: object.instance_id, label: `讨论「${object.title.slice(0, 60)}」`,
-          detail: `问答 · 版本 ${object.ref.version}${via}`, version: object.ref.version, include: true, legacy: { document_id: object.ref.document_id },
-          caveat: '当前服务会沿来源关系读取该讨论来源文稿的当前全文',
+          detail: `问答 · 版本 ${object.ref.version}${via}`, version: object.ref.version, include: direct, legacy: { document_id: object.ref.document_id },
         });
         const sources = object.discussion?.sources;
         if (!object.discussion?.context_id) {
@@ -110,9 +106,8 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
               group: 'history', objectId: object.instance_id,
               label: source.anchor_id ? `原片段「${source.content.slice(0, 60)}」` : `原整篇「${source.title}」`,
               detail: `${source.title} · 版本 ${source.version} · 来自讨论「${object.title.slice(0, 24)}」`,
-              version: source.version, include: true,
+              version: source.version, include: direct,
               legacy: source.anchor_id ? { anchor_id: source.anchor_id } : null,
-              needsScene: source.anchor_id ? undefined : '冻结的历史全文需要后端冻结继承',
             });
           }
         }
@@ -125,14 +120,14 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
         push({
           key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id,
           label: relation ? `研究关系线「${relation.label || relation.kind}」` : `视觉连线${link?.label ? `「${link.label}」` : ''}`,
-          detail: `${ends}${link?.view?.detached_from ? ' · 已改接，原关系保留' : ''}`, version: null, include: true, legacy: null, needsScene: SCENE_ONLY,
+          detail: `${ends}${link?.view?.detached_from ? ' · 已改接，原关系保留' : ''}`, version: null, include: direct, legacy: null,
         });
         if (relation) {
           const claim = relation.claim;
           push({
             key: `relation:${relation.id}`, group: 'body', objectId: object.instance_id, label: `关系记录：${relation.kind}${relation.label ? `「${relation.label}」` : ''}`,
             detail: claim ? `状态 ${claim.status} · 条件 ${claim.conditions || '—'} · 反例 ${claim.counterexamples || '—'}` : '尚无论证记录',
-            version: null, include: true, legacy: null, needsScene: SCENE_ONLY,
+            version: null, include: direct, legacy: null,
           });
         }
         break;
@@ -141,29 +136,30 @@ export function buildMaterials(projection: SceneProjection, anchors: Anchor[], d
       case 'frame':
         push({
           key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id, label: `${object.kind === 'group' ? '分组' : '框'}「${object.title}」`,
-          detail: `${object.child_ids.length} 个子对象 · ${position(object)}`, version: null, include: true, legacy: null, needsScene: SCENE_ONLY,
+          detail: `${object.child_ids.length} 个子对象 · ${position(object)}`, version: null, include: direct, legacy: null,
         });
+        break;
+      case 'image':
+        push({
+          key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id, label: `图片「${object.title}」`,
+          detail: `${position(object)}${via}`, version: null, include: direct, legacy: null,
+        });
+        // 图像内容只在用户明确选择后交给视觉模型
+        if (object.asset_id) {
+          push({
+            key: `visual:${object.instance_id}`, group: 'visual', objectId: object.instance_id, label: `以图像读取「${object.title}」`,
+            detail: '原图作为视觉输入，附对象标识与位置', version: null, include: false, legacy: null, asset_id: object.asset_id,
+          });
+        }
         break;
       default:
         push({
           key: `locate:${object.instance_id}`, group: 'locate', objectId: object.instance_id, label: object.title,
-          detail: object.unreadable ?? position(object), version: null, include: true, legacy: null, needsScene: SCENE_ONLY,
+          detail: object.unreadable ?? position(object), version: null, include: direct, legacy: null,
         });
     }
   }
   return result;
-}
-
-/** 选入材料中可由现有上下文接口提交的部分。 */
-export function legacyRequest(materials: Material[]) {
-  const anchorIds = new Set<string>();
-  const documentIds = new Set<string>();
-  for (const material of materials) {
-    if (!material.include || !material.legacy) continue;
-    if ('anchor_id' in material.legacy) anchorIds.add(material.legacy.anchor_id);
-    else documentIds.add(material.legacy.document_id);
-  }
-  return { anchor_ids: Array.from(anchorIds), document_ids: Array.from(documentIds) };
 }
 
 /** 期望材料：用户选入且可提交的项，以及父讨论的冻结来源。 */

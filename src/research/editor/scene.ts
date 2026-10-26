@@ -46,6 +46,8 @@ export type SceneObject = {
   discussion?: { question: string; context_id: string | null; sources: ResearchContext['sources'] | null };
   /** 无法读取文字时的说明（笔迹、图片等） */
   unreadable?: string;
+  /** 图片对象对应的工作区资产，可作为视觉输入 */
+  asset_id?: string | null;
 };
 
 export type SceneProjection = {
@@ -72,6 +74,8 @@ export type SceneCatalog = {
   documentVersion(id: string): number | null;
   linkView(connectorId: string): LinkView | null;
   fragment(blockId: string): FragmentCard | null;
+  /** 编辑器图片块的资源键 → 工作区资产 */
+  assetFor(blobKey: string): string | null;
 };
 
 type ElementLike = {
@@ -177,7 +181,7 @@ export function projectScene(
   };
 
   const describeBlock = (model: BlockModel, via: string | null): SceneObject => {
-    const props = model.props as unknown as { xywh?: string; pageId?: string; title?: { toString(): string }; childElementIds?: Record<string, boolean>; caption?: string; rotate?: number };
+    const props = model.props as unknown as { xywh?: string; pageId?: string; title?: { toString(): string }; childElementIds?: Record<string, boolean>; caption?: string; rotate?: number; sourceId?: string };
     const base = { instance_id: model.id, flavour: model.flavour, layout: layoutOf(props.xywh, props.rotate ?? 0), parent_ids: parentsOf(model.id), child_ids: [] as string[], via, formulas: [] as string[] };
     if (model.flavour === SYNCED_DOC && props.pageId) {
       const doc = catalog.documents.get(props.pageId);
@@ -195,7 +199,10 @@ export function projectScene(
         const text = doc.content.blocks.map(item => item.text).join('\n\n');
         return { ...base, kind: 'idea', ref, title: doc.title || '想法', text, formulas: extractFormulas(text) };
       }
-      if (doc?.kind === 'image') return { ...base, kind: 'image', ref, title: doc.title, text: '', unreadable: '图片内容需要图像输入能力，文字模型只收到标题和来源' };
+      if (doc?.kind === 'image') {
+        const asset = typeof doc.metadata.source_asset_id === 'string' ? doc.metadata.source_asset_id : null;
+        return { ...base, kind: 'image', ref, title: doc.title, text: '', asset_id: asset, unreadable: '未选择图像阅读时，模型只收到标题、来源与位置' };
+      }
       return { ...base, kind: 'document', ref, title: doc?.title ?? '文稿', text: '' };
     }
     if (model.flavour === 'affine:note') {
@@ -219,7 +226,10 @@ export function projectScene(
       const children = Object.keys(props.childElementIds ?? {});
       return { ...base, kind: 'frame', ref: { type: 'editor', flavour: model.flavour }, title: props.title?.toString() || '框', text: '', child_ids: children };
     }
-    return { ...base, kind: 'image', ref: { type: 'editor', flavour: model.flavour }, title: props.caption || '图片', text: '', unreadable: '图片内容需要图像输入能力，文字模型只收到标题和位置' };
+    return {
+      ...base, kind: 'image', ref: { type: 'editor', flavour: model.flavour }, title: props.caption || '图片', text: '',
+      asset_id: props.sourceId ? catalog.assetFor(props.sourceId) : null, unreadable: '未选择图像阅读时，模型只收到标题与位置',
+    };
   };
 
   const describeElement = (element: ElementLike, via: string | null): SceneObject => {
@@ -284,6 +294,28 @@ export function projectScene(
     bounds,
     created_at: new Date().toISOString(),
   };
+}
+
+/** 与所选对象外接矩形相距 gap 以内的其他对象（连线除外），供用户选择加入。 */
+export function neighborIds(store: Store, selected: string[], gap = 240): string[] {
+  const surface = surfaceOf(store);
+  const boundsOf = (id: string) => {
+    const block = store.getModelById(id);
+    const xywh = block ? (block.props as { xywh?: string }).xywh : surface?.getElementById(id)?.xywh;
+    return parseXYWH(xywh);
+  };
+  const rects = selected.map(boundsOf).filter((rect): rect is [number, number, number, number] => !!rect);
+  if (rects.length === 0) return [];
+  const left = Math.min(...rects.map(rect => rect[0])) - gap;
+  const top = Math.min(...rects.map(rect => rect[1])) - gap;
+  const right = Math.max(...rects.map(rect => rect[0] + rect[2])) + gap;
+  const bottom = Math.max(...rects.map(rect => rect[1] + rect[3])) + gap;
+  const chosen = new Set(selected);
+  return allSceneIds(store).filter(id => {
+    if (chosen.has(id) || surface?.getElementById(id)?.type === 'connector') return false;
+    const rect = boundsOf(id);
+    return !!rect && rect[0] < right && rect[0] + rect[2] > left && rect[1] < bottom && rect[1] + rect[3] > top;
+  });
 }
 
 /** 在选区下方给出默认写入区域，宽度与选区一致。 */

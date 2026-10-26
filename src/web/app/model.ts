@@ -2,8 +2,8 @@
 import {
   api, ApiError, type Anchor, type AnchorResolution, type Canvas, type CanvasAction, type CanvasProposal, type CanvasProposalResult,
   type Capabilities, type Claim, type DocumentKind, type Health,
-  type ModelCatalog, type Proposal, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
-  type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type Workspace, type WorkspaceSummary,
+  type EditorStateEnvelope, type ModelCatalog, type Proposal, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
+  type ContextChange, type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type Workspace, type WorkspaceSummary,
 } from '@research';
 import {
   type ConnectorEnd, type LinkEvent, type PendingSave, relationEndpoint, ResearchSession, type SceneLayout, type SceneProjection, type SelectionTarget, setEditorColorScheme, setPrimaryMode,
@@ -11,7 +11,7 @@ import {
 
 import { createStore, useStore } from '../lib/store';
 import {
-  type ExpectedSource, expectedFromMaterials, inheritedSources, legacyRequest, type Material,
+  type ExpectedSource, expectedFromMaterials, inheritedSources, type Material,
 } from './materials';
 
 export type View =
@@ -54,13 +54,25 @@ export type CanvasAsk = {
   region: SceneLayout | null;
   /** 面板在画布视口中的位置 */
   anchor: { left: number; top: number };
+  /** 选区截图等额外图像（已保存为工作区资产） */
+  visuals: AskVisual[];
   context: ResearchContext | null;
   contextKey: string | null;
-  busy: 'preview' | 'send' | null;
+  busy: 'preview' | 'send' | 'capture' | null;
   error: string | null;
+  /** 服务拒绝发送的结构化原因，供界面列出变化对象或超出预算的来源 */
+  problem: AskProblem | null;
   runId: string | null;
   placed: string | null;
 };
+
+export type AskVisual = { asset_id: string; label: string; bytes: number; url: string };
+
+export type AskProblem =
+  | { type: 'stale'; changes: ContextChange[] }
+  | { type: 'budget'; count: number; limit: number; sources: Array<{ number: number; document_id: string; character_count: number }> }
+  | { type: 'image_budget'; message: string }
+  | { type: 'vision'; message: string };
 
 /** 画布提案在前端的调整状态：操作内容与位置可改，可排除部分操作。 */
 export type ProposalDraft = {
@@ -285,11 +297,6 @@ export async function loadCapabilities() {
 }
 
 /** 能力是否已由服务声明。具体字段以 docs/api.md 记录的实际契约为准。 */
-export function capabilityOn(capabilities: Capabilities | null, name: 'scene_context' | 'frozen_inheritance' | 'canvas_proposals') {
-  const value = capabilities?.[name];
-  return value === true || (typeof value === 'number' && value > 0);
-}
-
 export function setModel(model: string) {
   writeLocal('rc:model', model);
   app.set({ model });
@@ -371,13 +378,7 @@ export async function openWorkspace(id: string, options: { discard?: boolean } =
 }
 
 function onLinkEvent(event: LinkEvent) {
-  if (event.type === 'relation-created') {
-    toast('已为两张文稿卡片的连线建立研究关系。删除这条线只会在本画布隐藏它，研究关系在关系面板中管理。', 'success', {
-      label: '研究这个联系', run: () => openBridge(event.relation.id, event.canvasId),
-    });
-  } else if (event.type === 'relation-failed') {
-    toast(`连线已保留为纯视觉连线，建立研究关系失败：${event.error}`, 'error');
-  } else if (event.type === 'view-hidden') {
+  if (event.type === 'view-hidden') {
     toast('已从本画布移除这条连线，研究关系仍保留。', 'info', {
       label: '恢复显示', run: () => { session?.showRelation(event.canvasId, event.relationId); },
     });
@@ -526,6 +527,10 @@ export type CanvasActions = {
   ask(ids: string[]): void;
   /** 按当前选择重新生成投影（画布保存后取得对应 revision） */
   reproject(ids: string[]): { projection: SceneProjection; materials: Material[] } | null;
+  /** 选区附近的其他对象 */
+  neighbors(ids: string[]): string[];
+  /** 将所选对象渲染为 PNG */
+  capture(ids: string[]): Promise<Blob>;
 };
 let canvasActions: CanvasActions | null = null;
 export function registerCanvasActions(actions: CanvasActions | null) {
@@ -537,7 +542,11 @@ async function waitCanvasActions(): Promise<CanvasActions | null> {
   const canvasId = view.type === 'canvas' ? view.id : app.get().lastCanvasId;
   if (!canvasId) { toast('请先打开一张画布', 'error'); return null; }
   if (view.type !== 'canvas') openCanvas(canvasId);
-  // 画布视图挂载后执行
+  return mountedCanvasActions(canvasId);
+}
+
+/** 等待画布视图（重新）挂载并登记操作 */
+async function mountedCanvasActions(canvasId: string): Promise<CanvasActions | null> {
   for (let i = 0; i < 60 && canvasActions?.canvasId !== canvasId; i++) await new Promise(resolve => setTimeout(resolve, 50));
   return canvasActions?.canvasId === canvasId ? canvasActions : null;
 }
@@ -747,8 +756,10 @@ function composerExpectation(composer: Composer): ExpectedSource[] {
   return expected;
 }
 
+/** 快照身份包含整篇材料保存后的版本；片段引用固定版本。 */
 function composerKey(composer: Composer) {
-  return JSON.stringify([composer.mode, composer.question.trim(), [...composer.documentIds].sort(), [...composer.anchorIds].sort()]);
+  const versions = [...composer.documentIds].sort().map(id => `${id}@${session?.docStatus(id)?.version ?? documentById(id)?.current_version ?? ''}`);
+  return JSON.stringify([composer.mode, composer.question.trim(), versions, [...composer.anchorIds].sort()]);
 }
 
 async function flushMaterials(composer: Composer) {
@@ -764,14 +775,16 @@ export async function previewContext(open = true): Promise<ResearchContext | nul
   if (!workspaceId) return null;
   if (!composer.question.trim()) { updateComposer({ error: '请先写下要讨论的问题' }); return null; }
   if (composer.mode === 'rewrite' && composer.anchorIds.length !== 1) { updateComposer({ error: '改写需要恰好一个精确选段' }); return null; }
-  const key = composerKey(composer);
-  if (composer.preview && composer.previewKey === key) {
-    if (open) setDialogs({ contextId: composer.preview.id });
-    return composer.preview;
-  }
   updateComposer({ busy: 'preview' });
   try {
+    // 先保存材料，再按保存后的版本判断能否复用已冻结的预览
     await flushMaterials(composer);
+    const key = composerKey(composer);
+    if (composer.preview && composer.previewKey === key) {
+      updateComposer({ busy: null });
+      if (open) setDialogs({ contextId: composer.preview.id });
+      return composer.preview;
+    }
     const context = await api.createContext(workspaceId, {
       question: composer.question.trim(),
       mode: composer.mode,
@@ -807,8 +820,44 @@ export async function sendComposer() {
     }));
     watchRun(run.id);
   } catch (error) {
-    updateComposer({ busy: null, error: errorText(error) });
+    if (error instanceof ApiError && error.code === 'stale_context') {
+      // 材料在冻结后被修改：载入新版本，丢弃旧快照并重新冻结，问题与材料保留
+      updateComposer({ busy: null, preview: null, previewKey: null });
+      await adoptContextChanges((error.details as { changes?: ContextChange[] }).changes ?? []);
+      await previewContext(false);
+      updateComposer({ error: `材料在冻结后有更新（${staleSummary(error)}），已重新冻结，请检查后再次发送。` });
+    } else {
+      updateComposer({ busy: null, error: errorText(error) });
+    }
   }
+}
+
+/**
+ * 其他客户端在冻结后修改了材料：载入变化文稿的服务端版本，画布落后时按服务端画布重建并等待视图重新挂载，
+ * 之后的重新冻结即按最新版本投影。冻结前已保存本地编辑，此处不覆盖未保存内容。
+ */
+async function adoptContextChanges(changes: ContextChange[]) {
+  const s = session;
+  if (!s) return;
+  await Promise.all(changes.map(async change => {
+    if (change.type === 'document') {
+      const doc = await api.getDocument(change.id);
+      upsertDocument(doc);
+      s.applyServerDocument(doc);
+    } else if ((s.canvasStatus(change.id)?.version ?? change.current_revision) < change.current_revision) {
+      registerCanvasActions(null);
+      await s.reloadCanvas(change.id, documentMap());
+      await mountedCanvasActions(change.id);
+    }
+  }));
+}
+
+/** stale_context 详情的简短说明。 */
+export function staleSummary(error: ApiError | ContextChange[]) {
+  const changes = Array.isArray(error) ? error : ((error.details as { changes?: ContextChange[] }).changes ?? []);
+  return changes.map(change => change.type === 'document'
+    ? `「${documentById(change.id)?.title || '文稿'}」v${change.expected_version}→v${change.current_version}`
+    : `画布「${app.get().summary?.canvases.find(canvas => canvas.id === change.id)?.name ?? '画布'}」r${change.expected_revision}→r${change.current_revision}`).join('、');
 }
 
 export function watchRun(id: string) {
@@ -1105,16 +1154,16 @@ async function loadEndpointContexts(relations: Relation[]) {
 
 // ------------------------------------------------------------------ 画布就近提问
 export function openAsk(input: Pick<CanvasAsk, 'canvasId' | 'ids' | 'projection' | 'materials' | 'region' | 'anchor'>) {
-  const defaultMode: CanvasAsk['mode'] = capabilityOn(app.get().capabilities, 'canvas_proposals') ? 'canvas' : 'discussion';
   app.set(state => {
     const previous = state.ask;
-    // 同一选择重新打开时保留问题与材料勾选
+    // 同一选择重新打开时保留问题、回答方式、材料勾选与图像
     const same = previous && previous.canvasId === input.canvasId && JSON.stringify(previous.ids) === JSON.stringify(input.ids);
     const materials = same ? input.materials.map(item => ({ ...item, include: previous.materials.find(old => old.key === item.key)?.include ?? item.include })) : input.materials;
     return {
       ask: {
-        ...input, materials, question: same ? previous.question : previous?.question ?? '', mode: previous?.mode ?? defaultMode,
-        context: null, contextKey: null, busy: null, error: null, runId: same ? previous.runId : null, placed: same ? previous.placed : null,
+        ...input, materials, question: previous?.question ?? '', mode: same ? previous.mode : 'discussion',
+        visuals: same ? previous.visuals : [], context: null, contextKey: null, busy: null, error: null, problem: null,
+        runId: same ? previous.runId : null, placed: same ? previous.placed : null,
       },
     };
   });
@@ -1124,91 +1173,155 @@ export function closeAsk() {
   app.set({ ask: null });
 }
 
+/** 问题、回答方式、写入区域与图像变化后旧快照不再对应本次请求。 */
 export function updateAsk(patch: Partial<CanvasAsk>) {
-  app.set(state => {
-    if (!state.ask) return {};
-    const next = { ...state.ask, ...patch, error: patch.error === undefined ? null : patch.error };
-    // 问题或材料变化后旧快照不再对应本次请求
-    if (patch.question !== undefined && patch.question !== state.ask.question) { next.context = null; next.contextKey = null; }
-    return { ask: next };
-  });
+  app.set(state => (state.ask ? { ask: { ...state.ask, ...patch, error: patch.error ?? null, problem: patch.problem ?? null } } : {}));
 }
 
 export function toggleAskMaterial(key: string) {
   app.set(state => (state.ask ? {
-    ask: { ...state.ask, context: null, contextKey: null, materials: state.ask.materials.map(item => (item.key === key ? { ...item, include: !item.include } : item)) },
+    ask: { ...state.ask, problem: null, materials: state.ask.materials.map(item => (item.key === key ? { ...item, include: !item.include } : item)) },
   } : {}));
 }
 
+/** 把选区附近的对象加入本轮选择；默认不勾选其正文，由用户决定读取范围。 */
+export function addNeighborsToAsk() {
+  const ask = app.get().ask;
+  if (!ask || canvasActions?.canvasId !== ask.canvasId) return;
+  const extra = canvasActions.neighbors(ask.ids);
+  if (extra.length === 0) { toast('选区附近没有其他对象'); return; }
+  const fresh = canvasActions.reproject([...ask.ids, ...extra]);
+  if (!fresh) return;
+  const added = new Set(extra);
+  const materials = fresh.materials.map(item => ({
+    ...item, include: ask.materials.find(old => old.key === item.key)?.include ?? (added.has(item.objectId) ? false : item.include),
+  }));
+  app.set(state => (state.ask ? { ask: { ...state.ask, ids: [...ask.ids, ...extra], projection: fresh.projection, materials, problem: null } } : {}));
+  toast(`已加入附近 ${extra.length} 个对象，正文默认未勾选。`);
+}
+
+/** 截取所选对象所在区域作为图像，保存为工作区图片资产后供视觉模型读取。 */
+export async function captureAskRegion() {
+  const { ask, workspaceId } = app.get();
+  if (!ask || !workspaceId || canvasActions?.canvasId !== ask.canvasId) return;
+  updateAsk({ busy: 'capture' });
+  try {
+    const blob = await canvasActions.capture(ask.ids);
+    const file = new File([blob], `画布选区-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`, { type: 'image/png' });
+    const result = await api.importFile(workspaceId, file);
+    upsertDocument(result.document);
+    app.set(state => (state.ask ? {
+      ask: { ...state.ask, busy: null, visuals: [...state.ask.visuals, { asset_id: result.asset.id, label: result.document.title, bytes: result.asset.byte_length, url: result.asset.url }] },
+    } : {}));
+  } catch (error) {
+    updateAsk({ busy: null, error: `截图失败：${errorText(error)}` });
+  }
+}
+
+export function removeAskVisual(assetId: string) {
+  app.set(state => (state.ask ? { ask: { ...state.ask, visuals: state.ask.visuals.filter(item => item.asset_id !== assetId), problem: null } } : {}));
+}
+
+/** 本轮请求的视觉输入：勾选的图片对象与选区截图，均关联本轮选入的场景对象。 */
+function askVisuals(ask: CanvasAsk) {
+  const included = ask.materials.filter(item => item.include);
+  const visuals = included.filter(item => item.group === 'visual' && item.asset_id).map(item => ({ asset_id: item.asset_id!, object_ids: [item.objectId] }));
+  if (ask.visuals.length) {
+    const chosen = new Set(ask.ids);
+    const objects = Array.from(new Set(included.map(item => item.objectId)));
+    const inSelection = objects.filter(id => chosen.has(id));
+    for (const visual of ask.visuals) visuals.push({ asset_id: visual.asset_id, object_ids: inSelection.length ? inSelection : objects });
+  }
+  return visuals;
+}
+
+/** 快照身份：问题、模式、勾选材料及其版本、画布版本、写入区域、选择与图像。 */
 function askKey(ask: CanvasAsk) {
-  const included = ask.materials.filter(item => item.include).map(item => item.key).sort();
-  return JSON.stringify([ask.mode, ask.question.trim(), included, ask.region, ask.ids]);
+  const included = ask.materials.filter(item => item.include).map(item => `${item.key}@${item.version ?? ''}`).sort();
+  return JSON.stringify([ask.mode, ask.question.trim(), included, ask.projection.canvas_revision, ask.region, ask.ids, ask.visuals.map(item => item.asset_id)]);
 }
 
 /**
- * 预览本次阅读与写入范围。服务声明场景上下文能力时：先保存画布与相关文稿，
- * 再按保存后的 revision 重新投影，提交 SceneProjection 与 Material[]（include 决定阅读范围）。
- * 旧服务只接收片段与文稿，按 document_ids / anchor_ids 提交。
+ * 冻结本轮阅读：保存相关文稿与画布 → 按保存后的版本重新投影 → 与上次快照身份相同则复用，
+ * 否则提交场景投影、材料与图像建立新上下文。预览与发送都经过这一步，本地编辑总在复用前写入。
  */
-export async function previewAsk(open = true): Promise<ResearchContext | null> {
-  const { ask, workspaceId, capabilities } = app.get();
-  if (!ask || !workspaceId) return null;
+async function freezeAsk(): Promise<ResearchContext | null> {
+  const { ask, workspaceId } = app.get();
+  const s = session;
+  if (!ask || !workspaceId || !s) return null;
   if (!ask.question.trim()) { updateAsk({ error: '请先写下要问的问题' }); return null; }
-  const key = askKey(ask);
-  if (ask.context && ask.contextKey === key) {
-    if (open) setDialogs({ contextId: ask.context.id });
-    return ask.context;
+  if (canvasActions?.canvasId !== ask.canvasId) { updateAsk({ error: '请回到该画布后再提问' }); return null; }
+  const documents = new Set<string>();
+  for (const object of ask.projection.objects) if (object.ref.type === 'document' || object.ref.type === 'anchor') documents.add(object.ref.document_id);
+  await Promise.all(Array.from(documents).filter(id => s.isLoaded(id)).map(id => s.flushDocument(id)));
+  await s.flushCanvas(ask.canvasId);
+  const fresh = canvasActions.reproject(ask.ids)!;
+  // 保留用户的勾选；投影与版本取保存后的状态
+  const materials = fresh.materials.map(item => ({ ...item, include: ask.materials.find(old => old.key === item.key)?.include ?? item.include }));
+  const current: CanvasAsk = { ...ask, projection: fresh.projection, materials };
+  const key = askKey(current);
+  if (ask.context && ask.contextKey === key) return ask.context;
+  const region = ask.region;
+  const context = await api.createSceneContext(workspaceId, {
+    question: ask.question.trim(),
+    mode: ask.mode,
+    projection: fresh.projection,
+    materials,
+    visuals: askVisuals(current),
+    write_scope: {
+      allow_create: ask.mode === 'canvas',
+      object_ids: [],
+      bounds: region ? { x: region.x, y: region.y, width: region.width, height: region.height } : null,
+    },
+  });
+  app.set(state => ({
+    contexts: { ...state.contexts, [context.id]: context },
+    expectations: { ...state.expectations, [context.id]: expectedFromMaterials(materials) },
+    ask: state.ask ? { ...state.ask, projection: fresh.projection, materials, context, contextKey: key } : null,
+  }));
+  return context;
+}
+
+/** 服务拒绝发送时的结构化原因：材料版本变化、文字或图像超出预算、模型不接收图像。 */
+function askProblem(error: unknown): AskProblem | null {
+  if (!(error instanceof ApiError)) return null;
+  const details = error.details as Record<string, unknown>;
+  switch (error.code) {
+    case 'stale_context': return { type: 'stale', changes: (details.changes ?? []) as ContextChange[] };
+    case 'context_budget_exceeded': return {
+      type: 'budget', count: Number(details.character_count ?? 0), limit: Number(details.max_input_characters ?? 0),
+      sources: (details.sources ?? []) as Array<{ number: number; document_id: string; character_count: number }>,
+    };
+    case 'image_budget_exceeded': return { type: 'image_budget', message: error.message };
+    case 'vision_unsupported': return { type: 'vision', message: error.message };
+    default: return null;
   }
+}
+
+export async function previewAsk(open = true): Promise<ResearchContext | null> {
   updateAsk({ busy: 'preview' });
   try {
-    const s = session;
-    const request = legacyRequest(ask.materials);
-    const anchorDocs = (app.get().summary?.anchors ?? []).filter(anchor => request.anchor_ids.includes(anchor.id)).map(anchor => anchor.document_id);
-    if (s) await Promise.all(Array.from(new Set([...request.document_ids, ...anchorDocs])).filter(id => s.isLoaded(id)).map(id => s.flushDocument(id)));
-    let context: ResearchContext;
-    if (capabilityOn(capabilities, 'scene_context')) {
-      if (s) await s.flushCanvas(ask.canvasId);
-      const fresh = canvasActions?.canvasId === ask.canvasId ? canvasActions.reproject(ask.ids) : null;
-      if (!fresh) throw new Error('请回到该画布后再预览');
-      // 保留用户的勾选，投影与版本取保存后的状态
-      const materials = fresh.materials.map(item => ({ ...item, include: ask.materials.find(old => old.key === item.key)?.include ?? item.include }));
-      const region = ask.region;
-      context = await api.createSceneContext(workspaceId, {
-        question: ask.question.trim(),
-        mode: ask.mode,
-        projection: fresh.projection,
-        materials,
-        write_scope: {
-          allow_create: ask.mode === 'canvas',
-          object_ids: [],
-          bounds: region ? { x: region.x, y: region.y, width: region.width, height: region.height } : null,
-        },
-      });
-      app.set(state => (state.ask ? { ask: { ...state.ask, projection: fresh.projection, materials } } : {}));
-    } else {
-      context = await api.createContext(workspaceId, { question: ask.question.trim(), mode: 'discussion', ...request });
-    }
-    const expected = expectedFromMaterials(app.get().ask?.materials ?? ask.materials);
-    app.set(state => ({
-      contexts: { ...state.contexts, [context.id]: context },
-      expectations: { ...state.expectations, [context.id]: expected },
-      ask: state.ask ? { ...state.ask, context, contextKey: askKey(state.ask), busy: null, error: null } : null,
-    }));
-    if (open) setDialogs({ contextId: context.id });
+    const context = await freezeAsk();
+    updateAsk({ busy: null });
+    if (context && open) setDialogs({ contextId: context.id });
     return context;
   } catch (error) {
-    updateAsk({ busy: null, error: errorText(error) });
+    updateAsk({ busy: null, error: errorText(error), problem: askProblem(error) });
     return null;
   }
 }
 
+/**
+ * 发送：先冻结本轮阅读（必要时重建上下文），再以返回的 context_id 发起运行。
+ * 远端修改造成 stale_context 时保留问题、选择与勾选，展示变化对象并重新冻结预览，由用户再次发送。
+ */
 export async function sendAsk() {
   const { workspaceId, model } = app.get();
   if (!workspaceId) return;
-  const context = await previewAsk(false);
-  if (!context) return;
   updateAsk({ busy: 'send' });
   try {
+    const context = await freezeAsk();
+    if (!context) { updateAsk({ busy: null }); return; }
     const run = await api.startRun(workspaceId, { context_id: context.id, model: model || undefined });
     app.set(state => ({
       runs: [run, ...state.runs.filter(item => item.id !== run.id)],
@@ -1216,7 +1329,14 @@ export async function sendAsk() {
     }));
     watchRun(run.id);
   } catch (error) {
-    updateAsk({ busy: null, error: errorText(error) });
+    const problem = askProblem(error);
+    updateAsk({ busy: null, error: errorText(error), problem });
+    if (problem?.type === 'stale') {
+      app.set(state => (state.ask ? { ask: { ...state.ask, context: null, contextKey: null } } : {}));
+      await adoptContextChanges(problem.changes);
+      await previewAsk(false);
+      app.set(state => (state.ask ? { ask: { ...state.ask, problem, error: '材料在冻结后有更新，已按最新版本重新冻结，请检查后再次发送。' } } : {}));
+    }
   }
 }
 
@@ -1325,18 +1445,16 @@ async function adoptProposalResult(result: CanvasProposalResult) {
 }
 
 /**
- * 确认写入：暂停画布自动保存并保存已有修改 → 提交调整后的操作集合 →
- * 在隔离副本中物化完整 editor_state → 事务应用 → 采用服务端返回的画布与文稿版本 → 恢复自动保存。
+ * 确认写入：暂停画布自动保存并保存已有修改 → 提交调整后的操作集合 → 后端在一个事务中
+ * 物化文稿、关系、Yjs 与对象表 → 采用响应的画布与文稿版本 → 恢复自动保存。
+ * 请求中断时读取提案状态：已应用则以幂等的重复确认取回同一事务结果。
  */
 export async function applyProposalDraft(options: { acceptCanvasChanges?: boolean } = {}) {
   const draft = app.get().proposalDraft;
   const s = session;
   let proposal = draft ? app.get().canvasProposals[draft.id] : undefined;
   if (!draft || !s || !proposal) return;
-  const dependency = proposalDependencyErrors(draft);
-  if (dependency.length) { patchDraft({ error: dependency.join('；') }); return; }
   const canvasId = proposal.canvas_id;
-  if (!s.canvasStatus(canvasId)) { patchDraft({ error: '请先打开该提案所属的画布' }); return; }
   patchDraft({ busy: 'apply', error: null });
   let held = false;
   try {
@@ -1346,24 +1464,32 @@ export async function applyProposalDraft(options: { acceptCanvasChanges?: boolea
       patchDraft({ busy: null, conflict: { from: proposal.canvas_revision, to: revision } });
       return;
     }
-    const actions = draft.actions.filter(action => !draft.excluded.includes(actionKey(action)));
     if (draft.dirty || revision !== proposal.canvas_revision) {
       proposal = await api.updateCanvasProposal(proposal.id, {
         expected_revision: proposal.revision,
-        actions,
+        actions: draft.actions.filter(action => !draft.excluded.includes(actionKey(action))),
         expected_canvas_revision: revision !== proposal.canvas_revision ? revision : undefined,
       });
       app.set(state => ({ canvasProposals: { ...state.canvasProposals, [proposal!.id]: proposal! } }));
     }
-    const { envelope, unplaced } = s.materializeProposal(canvasId, proposal.actions, proposal.id_map);
-    const result = await api.applyCanvasProposal(proposal.id, { expected_revision: proposal.revision, expected_canvas_revision: revision, editor_state: envelope });
+    const input = { expected_revision: proposal.revision, expected_canvas_revision: revision };
+    let result: CanvasProposalResult;
+    try {
+      result = await api.applyCanvasProposal(proposal.id, input);
+    } catch (error) {
+      if (!(error instanceof ApiError && (error.isNetwork || error.status >= 500))) throw error;
+      // 响应丢失：事务要么完整提交要么未发生；读取提案状态决定取回结果或允许重试
+      const current = await api.getCanvasProposal(proposal.id);
+      if (current.status !== 'applied') throw new Error(`确认请求未完成（${error.message}），画布未写入，可重试。`);
+      result = await api.applyCanvasProposal(proposal.id, input);
+    }
     await adoptProposalResult(result);
-    patchDraft({ busy: null, dirty: false, conflict: null, unplaced, actions: result.proposal.actions, excluded: [] });
+    patchDraft({ busy: null, dirty: false, conflict: null, unplaced: unplacedRelations(result), actions: result.proposal.actions, excluded: [] });
     toast(`已写入 ${result.proposal.actions.length} 项画布操作，可整组撤销。`, 'success', { label: '撤销本次写入', run: () => void revertProposalDraft() });
   } catch (error) {
     if (error instanceof ApiError && error.isConflict) {
       const current = error.currentVersion ?? null;
-      patchDraft({ busy: null, error: `${error.message}${current != null ? `（当前版本 ${current}）` : ''}。生成结果与调整仍保留。`, conflict: current != null && proposal ? { from: proposal.canvas_revision, to: current } : null });
+      patchDraft({ busy: null, error: `${error.message}${current != null ? `（当前版本 ${current}）` : ''}。生成结果与调整仍保留。`, conflict: current != null ? { from: proposal.canvas_revision, to: current } : null });
       await loadCanvasProposal(draft.id);
     } else {
       patchDraft({ busy: null, error: errorText(error) });
@@ -1371,6 +1497,13 @@ export async function applyProposalDraft(options: { acceptCanvasChanges?: boolea
   } finally {
     if (held) s.releaseCanvas(canvasId);
   }
+}
+
+/** 应用结果中没有在本画布形成连线的新关系（端点位于其他画布时保持待放置）。 */
+function unplacedRelations(result: CanvasProposalResult) {
+  const views = Object.values((result.canvas.editor_state as EditorStateEnvelope | null)?.link_views ?? {});
+  const bound = new Set(views.map(view => view.relation_id));
+  return result.relations.filter(relation => !bound.has(relation.id)).map(relation => relation.id);
 }
 
 /** 按本次事务整组撤销。后续编辑或引用导致的冲突保留现状并显示原因。 */
@@ -1461,8 +1594,9 @@ export function hideRelationOnCanvas(relationId: string) {
  * 文稿卡片使用文稿端点，片段卡片使用精确锚点；自由想法先冻结两端与连线的场景，
  * 再以 canvas_object 引用该场景中的实例。
  */
-export async function relateConnector(canvasId: string, connectorId: string) {
-  const { workspaceId, capabilities } = app.get();
+/** “研究这个联系”：用户显式把一条视觉连线建立为候选研究关系 */
+export async function relateConnector(canvasId: string, connectorId: string, label: string) {
+  const { workspaceId } = app.get();
   const s = session;
   if (!workspaceId || !s) return null;
   const [source, target] = s.connectorEndpoints(canvasId, connectorId);
@@ -1471,10 +1605,6 @@ export async function relateConnector(canvasId: string, connectorId: string) {
     return null;
   }
   const typed = source.type !== 'document' || target.type !== 'document';
-  if (typed && !capabilities?.relation_endpoints) {
-    toast('当前后端尚未提供片段与想法端点，关系的两端需要是文稿卡片。', 'error');
-    return null;
-  }
   if (source.type === 'document' && target.type === 'document' && source.id === target.id) {
     toast('两端是同一篇文稿的卡片；如需研究其中两处内容，请先放置片段卡片。', 'error');
     return null;
@@ -1499,9 +1629,10 @@ export async function relateConnector(canvasId: string, connectorId: string) {
     const ref = (end: ConnectorEnd): ResearchEndpoint => end.type === 'free'
       ? { type: 'canvas_object', context_id: contextId!, canvas_id: canvasId, instance_id: end.instance }
       : { type: end.type, id: end.id };
+    const claim = { ...emptyClaim, status: 'candidate' as const };
     const relation = await api.createRelation(workspaceId, typed
-      ? { source_ref: ref(source), target_ref: ref(target), kind: '关联', label: '' }
-      : { source_id: source.id, target_id: target.id, kind: '关联', label: '' });
+      ? { source_ref: ref(source), target_ref: ref(target), kind: '关联', label, claim }
+      : { source_id: source.id, target_id: target.id, kind: '关联', label, claim });
     if (contextId) toast('已冻结两端想法的场景并建立候选关系，想法内容按建立时的文字记录。', 'success', { label: '查看场景', run: () => setDialogs({ contextId }) });
     s.bindConnector(canvasId, connectorId, relation.id);
     upsertRelation(relation);

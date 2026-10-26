@@ -1,11 +1,12 @@
 import { GfxControllerIdentifier } from '@editor/runtime/gfx';
 import type { BlockStdScope } from '@editor/runtime';
 import type { Store } from '@editor/document';
+import { EdgelessClipboardController } from '@editor/blocks/root/edgeless/clipboard/clipboard';
 import {
   ChatWithAiIcon, CloseIcon, CommentIcon, EditIcon, ExpandFullIcon, ImportIcon, LinkIcon, NoteShadowDuotoneIcon, OpenInNewIcon, PlusIcon, ViewIcon,
 } from '@blocksuite/icons/rc';
 import type { Anchor, ProposalEndpoint } from '@research';
-import { allSceneIds, projectScene, readSelection, regionBelow, type SceneCatalog, type SelectionTarget } from '@research/editor';
+import { allSceneIds, neighborIds, projectScene, readSelection, regionBelow, type SceneCatalog, type SelectionTarget } from '@research/editor';
 import { Button, QuietDotsWave } from '@ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -77,7 +78,6 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const selection = useApp(state => state.canvasSelection);
   const sceneIds = useApp(state => state.sceneIds);
   const ask = useApp(state => (state.ask?.canvasId === canvasId ? state.ask : null));
-  const capabilities = useApp(state => state.capabilities);
   const bridge = useApp(state => state.bridge);
   const proposalOpen = useApp(state => !!state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId);
   const proposalId = useApp(state => (state.proposalDraft && state.canvasProposals[state.proposalDraft.id]?.canvas_id === canvasId ? state.proposalDraft.id : null));
@@ -86,6 +86,9 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const [picker, setPicker] = useState(false);
   const [name, setName] = useState(canvas?.name ?? '');
   const gfxRef = useRef<Gfx | null>(null);
+  const stdRef = useRef<BlockStdScope | null>(null);
+  /** “研究这个联系”的一句说明；null 表示未展开 */
+  const [relateNote, setRelateNote] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selectedCards, setSelectedCards] = useState<string[]>([]);
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -174,6 +177,20 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     return id;
   }, [canvasId, store]);
 
+  /** 将所选块与绘制元素按画布渲染为 PNG（编辑器自带的导出管线）。 */
+  const capture = useCallback(async (ids: string[]) => {
+    const std = stdRef.current;
+    const gfx = gfxRef.current;
+    if (!std || !gfx || !store) throw new Error('画布尚未就绪');
+    const models = ids.map(id => gfx.getElementById(id)).filter(Boolean);
+    const blocks = models.filter(model => store.getModelById((model as { id: string }).id));
+    const shapes = models.filter(model => !store.getModelById((model as { id: string }).id));
+    const clipboard = std.getOptional(EdgelessClipboardController);
+    const canvas = clipboard ? await clipboard.toCanvas(blocks as never, shapes as never, { background: '#ffffff' }) : undefined;
+    if (!canvas) throw new Error('所选对象没有可渲染的范围');
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('截图编码失败'))), 'image/png'));
+  }, [store]);
+
   /** 按当前编辑器状态生成场景投影与材料清单；revision 取会话中已保存的画布版本。 */
   const project = useCallback((ids: string[]) => {
     const s = getSession();
@@ -191,6 +208,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
       documentVersion: id => s.docStatus(id)?.version ?? null,
       linkView: id => s.linkView(canvasId, id),
       fragment: id => s.fragmentFor(canvasId, id),
+      assetFor: key => s.blobs.assetIdFor(key),
     };
     const everything = allSceneIds(store);
     const whole = everything.length > 0 && everything.every(id => ids.includes(id));
@@ -208,13 +226,14 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
 
   useEffect(() => {
     if (!store) return;
-    registerCanvasActions({ canvasId, place: placeDocument, placeFragment, ask: openAskFor, reproject: project });
+    registerCanvasActions({ canvasId, place: placeDocument, placeFragment, ask: openAskFor, reproject: project, neighbors: ids => neighborIds(store, ids), capture });
     return () => registerCanvasActions(null);
-  }, [store, canvasId, placeDocument, placeFragment, openAskFor, project]);
+  }, [store, canvasId, placeDocument, placeFragment, openAskFor, project, capture]);
 
   const onReady = useCallback((_editor: unknown, std: BlockStdScope) => {
     const gfx = std.get(GfxControllerIdentifier) as unknown as Gfx;
     gfxRef.current = gfx;
+    stdRef.current = std;
     const update = () => {
       const ids = gfx.selection.selectedIds;
       const s = getSession();
@@ -293,11 +312,9 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
   const selectedRelation = selection?.kind === 'relation' ? relations.find(item => item.id === selection.relationId) : undefined;
   const linkView = selection?.kind === 'link' ? session?.linkView(canvasId, selection.connectorId) ?? null : null;
   const linkEnds = selection?.kind === 'link' ? session?.connectorEndpoints(canvasId, selection.connectorId) ?? [null, null] : [null, null];
-  const typedEndpoints = !!capabilities?.relation_endpoints;
-  // 文稿卡片之间始终可建立关系；片段卡片与带文字的想法需要服务提供类型化端点
+  // 两端为文稿卡片、片段卡片或带文字的想法，且不是同一对象
   const linkRelatable = !!linkEnds[0] && !!linkEnds[1] && linkEnds[0].instance !== linkEnds[1].instance
-    && !(linkEnds[0].type === 'document' && linkEnds[1].type === 'document' && linkEnds[0].id === linkEnds[1].id)
-    && (typedEndpoints || (linkEnds[0].type === 'document' && linkEnds[1].type === 'document'));
+    && !(linkEnds[0].type === 'document' && linkEnds[1].type === 'document' && linkEnds[0].id === linkEnds[1].id);
   const detachedFrom = linkView?.detached_from ? relations.find(item => item.id === linkView.detached_from) : undefined;
 
   // 浮层位置：就近提问面板放在所选范围右侧，空间不足时放在左侧
@@ -396,9 +413,26 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
           {selection?.kind === 'link' && (
             <>
               <Chip>{detachedFrom ? '已改接 · 原关系保留' : '纯视觉连线'}</Chip>
-              {linkRelatable && (
-                <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => void relateConnector(canvasId, selection.connectorId)}>研究这个联系</Button>
-              )}
+              {linkRelatable && (relateNote === null ? (
+                <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => setRelateNote('')}>研究这个联系</Button>
+              ) : (
+                <form
+                  className="flex items-center gap-1.5"
+                  onSubmit={event => { event.preventDefault(); void relateConnector(canvasId, selection.connectorId, relateNote.trim()).then(() => setRelateNote(null)); }}
+                >
+                  <input
+                    autoFocus
+                    aria-label="联系说明"
+                    className="rc-input w-56 py-1 text-xs"
+                    placeholder="一句说明（可选）"
+                    value={relateNote}
+                    onChange={event => setRelateNote(event.target.value)}
+                    onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') setRelateNote(null); }}
+                  />
+                  <Button size="sm" variant="primary" type="submit">建立候选联系</Button>
+                  <Button size="sm" variant="ghost" type="button" onClick={() => setRelateNote(null)}>取消</Button>
+                </form>
+              ))}
               {detachedFrom && <Button size="sm" variant="ghost" onClick={() => app.set({ selectedRelationId: detachedFrom.id, tab: 'relations', panelOpen: true })}>查看原关系</Button>}
             </>
           )}
@@ -445,7 +479,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
       <div ref={surface} className="relative min-h-0 flex-1" data-testid="canvas-surface">
         {error && <div className="p-6 text-sm text-[var(--rc-bad)]">画布载入失败：{error}</div>}
         {!store && !error && <div className="flex h-full items-center justify-center"><QuietDotsWave label="载入画布" /></div>}
-        {store && <EditorHost key={generation} store={store} mode="edgeless" onReady={onReady} />}
+        {store && store === session?.getStore(canvasId) && <EditorHost key={generation} store={store} mode="edgeless" onReady={onReady} />}
         {gfx && (ask || proposalOpen) && (
           <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
             {ask && <WriteRegion ask={ask} toView={toView} zoom={zoom} />}

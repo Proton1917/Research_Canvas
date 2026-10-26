@@ -112,7 +112,7 @@ export const api = {
   getCanvasProposal: (id: string) => request<CanvasProposal>(`/canvas-proposals/${enc(id)}`),
   updateCanvasProposal: (id: string, input: { expected_revision: number; actions: CanvasAction[]; expected_canvas_revision?: number }) =>
     request<CanvasProposal>(`/canvas-proposals/${enc(id)}`, { method: 'PATCH', json: input }),
-  applyCanvasProposal: (id: string, input: { expected_revision: number; expected_canvas_revision: number; editor_state?: unknown }) =>
+  applyCanvasProposal: (id: string, input: { expected_revision: number; expected_canvas_revision: number }) =>
     request<CanvasProposalResult>(`/canvas-proposals/${enc(id)}/apply`, { method: 'POST', json: input }),
   revertCanvasProposal: (id: string, input: { expected_revision: number; expected_canvas_revision: number }) =>
     request<CanvasProposalResult>(`/canvas-proposals/${enc(id)}/revert`, { method: 'POST', json: input }),
