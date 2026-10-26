@@ -15,6 +15,7 @@ import { RunsPanel } from '../panels/RunsPanel';
 import { VersionsPanel } from '../panels/VersionsPanel';
 import { CanvasView, DOC_DRAG_TYPE } from '../views/CanvasView';
 import { DocumentView } from '../views/DocumentView';
+import { PendingRuns } from '../views/PendingRuns';
 import {
   addMaterialDocument, app, boot, checkHealth, createCanvas, createDocument, dismissToast, exportWith, getSession,
   importFiles, openCanvas, openDocument, placeOnCanvas, restoreArchive, setDialogs, setTab, setTheme, useApp, type PanelTab,
@@ -270,8 +271,9 @@ export function App() {
           <Sidebar />
         </div>
         {(sidebarOpen || panelOpen) && <div className="absolute inset-0 z-30 bg-black/25 xl:hidden" onClick={() => app.set({ sidebarOpen: false, panelOpen: false })} aria-hidden="true" />}
-        <main className="min-w-0 flex-1" aria-label={view.type === 'canvas' ? '画布' : '文稿'}>
-          <MainView />
+        <main className="flex min-w-0 flex-1 flex-col" aria-label={view.type === 'canvas' ? '画布' : '文稿'}>
+          <PendingRuns />
+          <div className="min-h-0 flex-1"><MainView /></div>
         </main>
         <div className={`absolute inset-y-0 right-0 z-40 w-[min(100vw,var(--rc-panel))] border-l border-line bg-surface-1 transition-transform duration-200 xl:static xl:translate-x-0 ${panelOpen ? 'translate-x-0 shadow-lg' : 'translate-x-full'}`}>
           <ResearchPanel />

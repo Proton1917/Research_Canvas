@@ -3,9 +3,12 @@ import { CloseIcon, ImageIcon, PlusIcon, SendIcon, ViewIcon } from '@blocksuite/
 import { Button, SegmentedControl } from '@ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import type { VisualAsset } from '@research';
+
 import {
-  addNeighborsToAsk, type AskProblem, type CanvasAsk, captureAskRegion, closeAsk, documentById, previewAsk, removeAskVisual,
-  sendAsk, setModel, staleSummary, toggleAskMaterial, updateAsk, useApp,
+  addAskVisual, addNeighborsToAsk, type AskProblem, awaitingPlacement, type CanvasAsk, captureAskRegion, closeAsk, discardVisualAsset, documentById,
+  loadVisualAssets, locateRun, placeRun, previewAsk, removeAskVisual, sendAsk, setModel, staleSummary, toggleAskMaterial, updateAsk, useApp,
+  type VisualReference, visualReferenceLabel,
 } from '../app/model';
 import type { Material, MaterialGroup } from '../app/materials';
 import { Chip } from '../components/common';
@@ -63,6 +66,84 @@ function ProblemDetail({ problem }: { problem: AskProblem }) {
   }
 }
 
+/** 截图列表中的一项：加入本轮、永久清理；已有引用时列出引用位置。 */
+function VisualAssetRow({ asset, inAsk }: { asset: VisualAsset; inAsk: boolean }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState<VisualReference[] | null>(null);
+  const references = blocked ?? asset.references;
+  return (
+    <li className="rounded-lg px-1.5 py-1" data-testid="visual-asset">
+      <div className="flex items-center gap-2">
+        <img src={asset.url} alt="" className="size-9 shrink-0 rounded border border-line object-cover" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] text-ink" title={asset.filename}>{asset.filename}</span>
+          <span className="block text-[11px] text-ink-muted">{formatBytes(asset.byte_length)} · {asset.references.length ? `${asset.references.length} 处引用` : '未被引用'}</span>
+        </span>
+        <Button size="xs" variant="secondary" disabled={inAsk} onClick={() => addAskVisual(asset)}>{inAsk ? '已在本轮' : '加入本轮'}</Button>
+        {!confirm && <Button size="xs" variant="ghost" onClick={() => { setConfirm(true); setBlocked(null); }}>永久清理</Button>}
+      </div>
+      {confirm && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-md bg-[var(--cds-alpha-1)] px-2 py-1.5 text-[11px] text-ink-secondary">
+          <span className="min-w-0 flex-1">永久删除该截图文件？已有来源引用时服务会保留它。</span>
+          <Button size="xs" variant="primary" isLoading={busy} onClick={async () => {
+            setBusy(true);
+            const result = await discardVisualAsset(asset.id);
+            setBusy(false);
+            setConfirm(false);
+            setBlocked(result);
+          }}>确认清理</Button>
+          <Button size="xs" variant="ghost" disabled={busy} onClick={() => setConfirm(false)}>取消</Button>
+        </div>
+      )}
+      {blocked && (
+        <div role="alert" className="mt-1 rounded-md border border-[var(--rc-warn)]/50 px-2 py-1.5 text-[11px] text-ink-secondary" data-testid="asset-in-use">
+          <p className="font-medium text-ink">截图已作为研究来源被引用，图像与引用记录均保留：</p>
+          <ul className="mt-0.5 list-disc pl-4">{references.map(item => <li key={`${item.type}:${item.id}:${item.version ?? ''}`}>{visualReferenceLabel(item)}</li>)}</ul>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** 工作区的提问截图：按已有资产重新加入本轮，或显式清理不再需要的截图。 */
+function VisualLibrary({ ask }: { ask: CanvasAsk }) {
+  const assets = useApp(state => state.visualAssets);
+  useEffect(() => { void loadVisualAssets(); }, []);
+  if (!assets) return <p className="px-1.5 text-[11px] text-ink-muted">正在读取截图列表…</p>;
+  if (assets.length === 0) return <p className="px-1.5 text-[11px] text-ink-muted">工作区还没有提问截图。</p>;
+  return (
+    <ul className="max-h-56 overflow-auto rc-scroll" data-testid="visual-library">
+      {[...assets].reverse().map(asset => <VisualAssetRow key={asset.id} asset={asset} inAsk={ask.visuals.some(item => item.asset_id === asset.id)} />)}
+    </ul>
+  );
+}
+
+/** 讨论框归位状态：按运行来源放回发问时的画布。 */
+function PlacementStatus({ runId }: { runId: string }) {
+  const run = useApp(state => state.runs.find(item => item.id === runId));
+  const placement = useApp(state => state.placements[runId]);
+  if (!run || run.status !== 'succeeded' || !run.document_id) return null;
+  if (run.placement) {
+    return (
+      <p className="flex items-center gap-1.5 text-[11px] text-[var(--rc-ok)]">
+        讨论框已放在写入区域，可继续编辑、选段讨论或分支。
+        <button type="button" className="rc-focus-ring rounded text-clay hover:underline" onClick={() => void locateRun(run.id)}>定位</button>
+      </p>
+    );
+  }
+  if (!awaitingPlacement(run)) return null;
+  return (
+    <div className="text-[11px]" data-testid="placement-status">
+      {placement?.error ? (
+        <p className="text-[var(--rc-bad)]">放回画布失败：{placement.error}
+          {!placement.retry && <button type="button" className="rc-focus-ring ml-1 rounded text-clay hover:underline" onClick={() => void placeRun(run.id)}>重试</button>}
+        </p>
+      ) : <p className="text-ink-secondary">正在把讨论框放回写入区域…</p>}
+    </div>
+  );
+}
+
 /** 画布操作生成中：JSON 草稿按接收进度显示分析正文与候选标题。 */
 function DraftProgress({ answer }: { answer: string }) {
   const draft = parseProposalDraft(answer);
@@ -113,6 +194,7 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
   }));
   const model = useApp(state => state.model);
   const [showAll, setShowAll] = useState(false);
+  const [library, setLibrary] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { textarea.current?.focus(); }, [ask.ids.join(',')]);
 
@@ -149,7 +231,7 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           size="sm"
           items={[{ id: 'discussion', label: '讨论框' }, { id: 'canvas', label: '在画布上创建' }]}
           value={ask.mode}
-          onChange={mode => updateAsk({ mode: mode as 'canvas' | 'discussion', context: null, contextKey: null })}
+          onChange={mode => updateAsk({ mode: mode as 'canvas' | 'discussion' })}
         />
         <textarea
           ref={textarea}
@@ -186,7 +268,7 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
                     <img src={visual.url} alt="" className="size-9 shrink-0 rounded border border-line object-cover" />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink" title={visual.label}>{visual.label}</span>
                     <Chip className={maxImageBytes != null && visual.bytes > maxImageBytes ? 'text-[var(--rc-bad)]' : 'shrink-0'}>{formatBytes(visual.bytes)}</Chip>
-                    <Button size="icon-sm" variant="ghost" aria-label={`移除截图：${visual.label}`} icon={<CloseIcon width={14} height={14} />} onClick={() => removeAskVisual(visual.asset_id)} />
+                    <Button size="icon-sm" variant="ghost" aria-label={`移出本轮：${visual.label}`} title="移出本轮提问；截图文件保留，可在截图列表中清理" icon={<CloseIcon width={14} height={14} />} onClick={() => removeAskVisual(visual.asset_id)} />
                   </li>
                 ))}
               </ul>
@@ -195,7 +277,14 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           <div className="flex flex-wrap gap-1.5 px-1">
             <Button size="xs" variant="outline" icon={<PlusIcon width={14} height={14} />} disabled={!!ask.busy} onClick={addNeighborsToAsk}>加入附近对象</Button>
             <Button size="xs" variant="outline" icon={<ImageIcon width={14} height={14} />} isLoading={ask.busy === 'capture'} disabled={!!ask.busy} onClick={() => void captureAskRegion()}>截取选区图像</Button>
+            <Button size="xs" variant="ghost" aria-expanded={library} onClick={() => setLibrary(value => !value)}>{library ? '收起截图列表' : '截图列表'}</Button>
           </div>
+          {library && (
+            <div className="mt-1.5 rounded-lg border border-line px-1 py-1">
+              <p className="px-1.5 pb-0.5 text-[11px] font-medium text-ink-secondary">提问截图 · 加入本轮或永久清理</p>
+              <VisualLibrary ask={ask} />
+            </div>
+          )}
         </div>
         {blind && (
           <div className="rounded-lg border border-[var(--rc-warn)]/50 px-2.5 py-2 text-[11px] text-ink-secondary" data-testid="ask-vision">
@@ -234,7 +323,7 @@ export function CanvasAskPanel({ ask, left, top }: { ask: CanvasAsk; left: numbe
           <DraftProgress answer={run.answer} />
         ) : run && <RunOutput run={run} compact />}
         {run?.status === 'succeeded' && run.canvas_proposal_id && <p className="text-[11px] text-[var(--rc-ok)]">候选内容已在画布上显示，请在提案面板中调整、确认或拒绝。</p>}
-        {run?.status === 'succeeded' && ask.placed && <p className="text-[11px] text-[var(--rc-ok)]">讨论框已放在写入区域，可继续编辑、选段讨论或分支。</p>}
+        {run && <PlacementStatus runId={run.id} />}
       </div>
       <div className="flex items-center gap-1.5 border-t border-line px-3 py-2">
         <Button size="sm" variant="ghost" icon={<ViewIcon width={16} height={16} />} isLoading={ask.busy === 'preview'} disabled={!ask.question.trim() || !!ask.busy || connection !== 'online'} onClick={() => void previewAsk(true)}>

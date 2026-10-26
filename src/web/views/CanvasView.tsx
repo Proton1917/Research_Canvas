@@ -224,11 +224,38 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     openAsk({ canvasId, ids, ...result, region: regionBelow(result.projection.bounds), anchor: { left: 0, top: 0 } });
   }, [canvasId, project]);
 
+  /** 视口中心附近的空位（讨论归位缺少冻结写入区域时使用）。 */
+  const slot = useCallback((size: { width: number; height: number }) => {
+    const gfx = gfxRef.current;
+    const start: [number, number] = gfx ? [gfx.viewport.centerX - size.width / 2, gfx.viewport.centerY - size.height / 2] : [0, 0];
+    const [x, y] = store ? freeSlot(store, start, size) : start;
+    return { x, y, ...size };
+  }, [store]);
+
+  /** 选中对象并把视口移到其范围；编辑器刚挂载时等待其就绪，并排在挂载时的“显示全部”之后。 */
+  const focus = useCallback((ids: string[]) => {
+    const apply = (tries: number) => {
+      const gfx = gfxRef.current;
+      const rects = gfx ? ids.map(id => gfx.getElementById(id)?.xywh).filter((xywh): xywh is string => !!xywh).map(xywh => JSON.parse(xywh) as [number, number, number, number]) : [];
+      if (!gfx || rects.length === 0) { if (tries < 40) setTimeout(() => apply(tries + 1), 50); return; }
+      gfx.selection.set({ elements: ids, editing: false });
+      const x = Math.min(...rects.map(rect => rect[0]));
+      const y = Math.min(...rects.map(rect => rect[1]));
+      const right = Math.max(...rects.map(rect => rect[0] + rect[2]));
+      const bottom = Math.max(...rects.map(rect => rect[1] + rect[3]));
+      const zoom = Math.min(1, (gfx.viewport.width - 160) / (right - x), (gfx.viewport.height - 160) / (bottom - y));
+      gfx.viewport.setViewport(Math.max(0.1, zoom), [(x + right) / 2, (y + bottom) / 2], true);
+    };
+    setTimeout(() => apply(0), 100);
+  }, []);
+
   useEffect(() => {
-    if (!store) return;
-    registerCanvasActions({ canvasId, place: placeDocument, placeFragment, ask: openAskFor, reproject: project, neighbors: ids => neighborIds(store, ids), capture });
+    if (!store || store !== getSession()?.getStore(canvasId)) return;
+    registerCanvasActions({
+      canvasId, generation, place: placeDocument, placeFragment, ask: openAskFor, reproject: project, neighbors: ids => neighborIds(store, ids), capture, slot, focus,
+    });
     return () => registerCanvasActions(null);
-  }, [store, canvasId, placeDocument, placeFragment, openAskFor, project, capture]);
+  }, [store, canvasId, generation, placeDocument, placeFragment, openAskFor, project, capture, slot, focus]);
 
   const onReady = useCallback((_editor: unknown, std: BlockStdScope) => {
     const gfx = std.get(GfxControllerIdentifier) as unknown as Gfx;
@@ -389,56 +416,6 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
         />
         <SaveIndicator status={status} kind="canvas" />
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          {sceneIds.length > 0 && (
-            <Button size="sm" variant="primary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor(sceneIds)}>
-              向 AI 提问{sceneIds.length > 1 ? `（${sceneIds.length}）` : ''}
-            </Button>
-          )}
-          {selectedDoc?.kind === 'discussion' && selection?.kind === 'card' && (
-            <Button size="sm" variant="secondary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor([selection.blockId])} title="以这次讨论及其冻结材料为起点继续追问，结果放在旁边">继续追问</Button>
-          )}
-          {selectedDoc && (
-            <>
-              <Button size="sm" variant="ghost" icon={<EditIcon width={16} height={16} />} onClick={() => setPeekId(selectedDoc.id)}>展开编辑</Button>
-              <Button size="sm" variant="ghost" icon={<OpenInNewIcon width={16} height={16} />} onClick={() => openDocument(selectedDoc.id)}>打开精读</Button>
-              <Button size="sm" variant="ghost" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => addMaterialDocument(selectedDoc.id)}>作为讨论材料</Button>
-            </>
-          )}
-          {selectedRelation && selection?.kind === 'relation' && (
-            <>
-              <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => openBridge(selectedRelation.id, canvasId)}>研究这个联系</Button>
-              <Button size="sm" variant="ghost" icon={<ViewIcon width={16} height={16} />} onClick={() => hideRelationOnCanvas(selectedRelation.id)} title="只隐藏本画布中的连线，研究关系保留">在本画布隐藏</Button>
-            </>
-          )}
-          {selection?.kind === 'link' && (
-            <>
-              <Chip>{detachedFrom ? '已改接 · 原关系保留' : '纯视觉连线'}</Chip>
-              {linkRelatable && (relateNote === null ? (
-                <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => setRelateNote('')}>研究这个联系</Button>
-              ) : (
-                <form
-                  className="flex items-center gap-1.5"
-                  onSubmit={event => { event.preventDefault(); void relateConnector(canvasId, selection.connectorId, relateNote.trim()).then(() => setRelateNote(null)); }}
-                >
-                  <input
-                    autoFocus
-                    aria-label="联系说明"
-                    className="rc-input w-56 py-1 text-xs"
-                    placeholder="一句说明（可选）"
-                    value={relateNote}
-                    onChange={event => setRelateNote(event.target.value)}
-                    onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') setRelateNote(null); }}
-                  />
-                  <Button size="sm" variant="primary" type="submit">建立候选联系</Button>
-                  <Button size="sm" variant="ghost" type="button" onClick={() => setRelateNote(null)}>取消</Button>
-                </form>
-              ))}
-              {detachedFrom && <Button size="sm" variant="ghost" onClick={() => app.set({ selectedRelationId: detachedFrom.id, tab: 'relations', panelOpen: true })}>查看原关系</Button>}
-            </>
-          )}
-          {pairDocs.length === 2 && pairDocs[0] !== pairDocs[1] && (
-            <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => void createRelation(pairDocs[0], pairDocs[1])}>建立关系</Button>
-          )}
           <div className="relative">
             <Button size="sm" variant="secondary" icon={<PlusIcon width={16} height={16} />} onClick={() => setPicker(open => !open)} aria-expanded={picker}>放入文稿</Button>
             <Popover open={picker} onClose={() => setPicker(false)} className="right-0 max-h-[60vh] w-72 overflow-auto rc-scroll">
@@ -467,6 +444,60 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
             }}
           />
         </div>
+      </div>
+      {/* 随选择变化的操作放在固定高度的一行：选择对象时画布位置保持不变，连续点击仍落在同一对象上 */}
+      <div className="rc-scroll flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden border-b border-line bg-surface-1 px-3 [&>*]:shrink-0" data-testid="canvas-selection-bar">
+        {!(sceneIds.length > 0 || selection !== null || pairDocs.length === 2) && <span className="text-xs text-ink-muted">选择卡片、片段、想法或连线后，在这里提问、展开编辑或研究联系</span>}
+        {sceneIds.length > 0 && (
+          <Button size="sm" variant="primary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor(sceneIds)}>
+            向 AI 提问{sceneIds.length > 1 ? `（${sceneIds.length}）` : ''}
+          </Button>
+        )}
+        {selectedDoc?.kind === 'discussion' && selection?.kind === 'card' && (
+          <Button size="sm" variant="secondary" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => openAskFor([selection.blockId])} title="以这次讨论及其冻结材料为起点继续追问，结果放在旁边">继续追问</Button>
+        )}
+        {selectedDoc && (
+          <>
+            <Button size="sm" variant="ghost" icon={<EditIcon width={16} height={16} />} onClick={() => setPeekId(selectedDoc.id)}>展开编辑</Button>
+            <Button size="sm" variant="ghost" icon={<OpenInNewIcon width={16} height={16} />} onClick={() => openDocument(selectedDoc.id)}>打开精读</Button>
+            <Button size="sm" variant="ghost" icon={<ChatWithAiIcon width={16} height={16} />} onClick={() => addMaterialDocument(selectedDoc.id)}>作为讨论材料</Button>
+          </>
+        )}
+        {selectedRelation && selection?.kind === 'relation' && (
+          <>
+            <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => openBridge(selectedRelation.id, canvasId)}>研究这个联系</Button>
+            <Button size="sm" variant="ghost" icon={<ViewIcon width={16} height={16} />} onClick={() => hideRelationOnCanvas(selectedRelation.id)} title="只隐藏本画布中的连线，研究关系保留">在本画布隐藏</Button>
+          </>
+        )}
+        {selection?.kind === 'link' && (
+          <>
+            <Chip>{detachedFrom ? '已改接 · 原关系保留' : '纯视觉连线'}</Chip>
+            {linkRelatable && (relateNote === null ? (
+              <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => setRelateNote('')}>研究这个联系</Button>
+            ) : (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={event => { event.preventDefault(); void relateConnector(canvasId, selection.connectorId, relateNote.trim()).then(() => setRelateNote(null)); }}
+              >
+                <input
+                  autoFocus
+                  aria-label="联系说明"
+                  className="rc-input w-56 py-1 text-xs"
+                  placeholder="一句说明（可选）"
+                  value={relateNote}
+                  onChange={event => setRelateNote(event.target.value)}
+                  onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') setRelateNote(null); }}
+                />
+                <Button size="sm" variant="primary" type="submit">建立候选联系</Button>
+                <Button size="sm" variant="ghost" type="button" onClick={() => setRelateNote(null)}>取消</Button>
+              </form>
+            ))}
+            {detachedFrom && <Button size="sm" variant="ghost" onClick={() => app.set({ selectedRelationId: detachedFrom.id, tab: 'relations', panelOpen: true })}>查看原关系</Button>}
+          </>
+        )}
+        {pairDocs.length === 2 && pairDocs[0] !== pairDocs[1] && (
+          <Button size="sm" variant="secondary" icon={<LinkIcon width={16} height={16} />} onClick={() => void createRelation(pairDocs[0], pairDocs[1])}>建立关系</Button>
+        )}
       </div>
       {status?.state === 'conflict' && <ConflictBar kind="canvas" id={canvasId} />}
       {status?.state === 'error' && (

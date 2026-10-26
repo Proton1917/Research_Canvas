@@ -62,10 +62,20 @@ export class CaptionedBlockComponent<
             .selected=${this.selected$.value}
           ></affine-block-selection>`
         : null}
-      ${this.useZeroWidth && !this.store.readonly
+      ${this.useZeroWidth && !this.store.readonly && this._acceptsParagraphSibling()
         ? html`<block-zero-width .block=${this}></block-zero-width>`
         : nothing}
     </div>`;
+  }
+
+  /**
+   * The zero-width area inserts a paragraph after this block, which needs a
+   * parent that accepts paragraphs. Blocks placed on the edgeless surface
+   * (parent `affine:surface`) have no text flow to insert into.
+   */
+  private _acceptsParagraphSibling() {
+    const parent = this.store.getParent(this.model);
+    return !!parent && this.store.schema.isValid('affine:paragraph', parent.flavour);
   }
 
   // There may be multiple block-caption-editors in a nested structure.

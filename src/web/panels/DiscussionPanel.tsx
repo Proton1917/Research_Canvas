@@ -4,7 +4,7 @@ import { Button, QuietDotsWave, SegmentedControl, StreamingCursor, useScrollPinn
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  app, branchFrom, cancelRun, documentMap, loadCanvasProposal, loadContext, recoverCanvasRun, regenerateRun, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
+  app, awaitingPlacement, branchFrom, canvasName, cancelRun, locateRun, documentMap, loadCanvasProposal, loadContext, recoverCanvasRun, regenerateRun, reopenCanvasProposal, openDocument, placeOnCanvas, previewContext, registerComposerFocus, removeMaterial,
   sendComposer, setDialogs, setInheritMode, setModel, togglePicked, updateComposer, useApp,
 } from '../app/model';
 import { inheritedSources } from '../app/materials';
@@ -276,7 +276,14 @@ export function RunOutput({ run, compact = false }: { run: Run; compact?: boolea
         <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
           {doc && (
             <>
-              <Button size="xs" variant="primary" icon={<EdgelessIcon width={14} height={14} />} onClick={() => void placeOnCanvas(doc.id, firstSource(doc))}>加入画布</Button>
+              {run.origin ? (
+                // 画布提问的讨论按运行来源回到发问时的画布
+                <Button size="xs" variant="primary" icon={<EdgelessIcon width={14} height={14} />} onClick={() => void locateRun(run.id)} title={`画布「${canvasName(run.origin.canvas_id)}」`}>
+                  {awaitingPlacement(run) ? `放回原画布「${canvasName(run.origin.canvas_id)}」` : '在原画布中定位'}
+                </Button>
+              ) : (
+                <Button size="xs" variant="primary" icon={<EdgelessIcon width={14} height={14} />} onClick={() => void placeOnCanvas(doc.id, firstSource(doc))}>加入画布</Button>
+              )}
               <Button size="xs" variant="secondary" onClick={() => branchFrom([doc.id])}>继续讨论</Button>
               <Button size="xs" variant="ghost" icon={<OpenInNewIcon width={14} height={14} />} onClick={() => openDocument(doc.id)}>打开</Button>
             </>

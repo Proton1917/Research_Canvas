@@ -657,10 +657,13 @@ export class ResearchSession {
     const maxHeight = Math.max(size.height, 640);
     const subscription = entry.store.slots.blockUpdated.subscribe(payload => {
       if (payload.id !== id || payload.type !== 'update') return;
-      const model = entry.store.getModelById(id);
-      if (!model) return;
-      const [x, y, w, h] = parseXYWH((model.props as unknown as { xywh: string }).xywh);
-      if (h > maxHeight) entry.store.updateBlock(model, { xywh: `[${x},${y},${w},${maxHeight}]` } as never);
+      // 高度初始化在编辑器的响应式更新中写入；限制高度放在该次更新结束后，避免嵌套写入引起工具栏信号循环
+      queueMicrotask(() => {
+        const model = entry.store.getModelById(id);
+        if (!model) return;
+        const [x, y, w, h] = parseXYWH((model.props as unknown as { xywh: string }).xywh);
+        if (h > maxHeight) entry.store.updateBlock(model, { xywh: `[${x},${y},${w},${maxHeight}]` } as never);
+      });
     });
     setTimeout(() => subscription.unsubscribe(), 3000);
     this.syncCanvasRelations(canvasId);
@@ -922,28 +925,6 @@ export class ResearchSession {
     }
   }
 
-  /**
-   * 来源连接：从提问时所选的对象连到生成的讨论框。属于纯视觉连线（不建立研究关系），
-   * 删除时只影响本画布。已有同端点连线时不重复添加。
-   */
-  addSourceLinks(canvasId: string, sourceIds: string[], targetId: string) {
-    const entry = this._canvases.get(canvasId);
-    const surface = entry ? this._surface(entry.store) : null;
-    if (!entry || !surface || entry.store.readonly) return [];
-    const existing = new Set(Array.from(entry.views.values()).map(view => `${view.source_instance}>${view.target_instance}`));
-    const created: string[] = [];
-    for (const source of sourceIds) {
-      if (source === targetId || existing.has(`${source}>${targetId}`)) continue;
-      if (!entry.store.getModelById(source) && !surface.hasElementById(source)) continue;
-      const connectorId = surface.addElement({ type: 'connector', mode: 2, source: { id: source }, target: { id: targetId }, stroke: '#8e6cdf', strokeStyle: 'solid', strokeWidth: 2 });
-      // 先登记视图，避免保存时被当作新画出的文稿连线而自动建立研究关系
-      entry.views.set(connectorId, { view_id: connectorId, connector_id: connectorId, relation_id: null, source_instance: source, target_instance: targetId, created_at: new Date().toISOString() });
-      created.push(connectorId);
-    }
-    if (created.length) this._markCanvasDirty(entry);
-    return created;
-  }
-
   // ------------------------------------------------------------ 片段卡片
   fragmentCards(canvasId: string): Array<[string, FragmentCard]> {
     return Array.from(this._canvases.get(canvasId)?.fragments ?? []);
@@ -1047,6 +1028,15 @@ export class ResearchSession {
     entry.canvas = { ...entry.canvas, name };
     this.workspace.meta.setDocMeta(id, { title: name });
     this._markCanvasDirty(entry);
+  }
+
+  /** 服务端画布事务返回 409 时进入保存冲突状态，本地编辑保留，由用户选择保留本地或载入服务器版本。 */
+  markCanvasConflict(id: string, currentVersion: number | undefined, message: string) {
+    const entry = this._canvases.get(id);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    entry.status = { ...entry.status, state: 'conflict', conflictVersion: currentVersion, error: message };
+    this._emit();
   }
 
   async resolveCanvasConflictKeepLocal(id: string) {

@@ -569,6 +569,127 @@
       "evidence": "observed",
       "state": "context_budget_exceeded 时显示总字符数、上限和各来源长度，问题与勾选保留",
       "evidenceNote": "2026-10-25 在 127.0.0.1:8790 独立验证实例（后端 6bc427f，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」。验证实例临时把 max_input_characters 设为 800 实测，测后恢复 240000。"
+    },
+    {
+      "id": "run_pending",
+      "title": "待放回原画布的讨论",
+      "image": "screenshots/run_pending-image-0.png",
+      "group": "异步协作",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "在 A 发问后关闭提问框、切到 B 和文稿；运行完成后 B 的版本与对象不变，顶部列出待放回画布 A 的讨论，刷新后仍显示",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。画布「P0 归位 A/B」，运行记录的 origin 指向 A。"
+    },
+    {
+      "id": "run_placed",
+      "title": "讨论放回原画布",
+      "image": "screenshots/run_placed-image-0.png",
+      "group": "异步协作",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "“前往原画布”打开 A：暂停保存并写入本地编辑 → POST /runs/{id}/place → 采用返回画布；讨论框在冻结写入区域，来源线连向所选卡片，A r3→r4",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。归位响应中断时读取运行记录并重复请求，卡片仍为一张，画布只前进一次。"
+    },
+    {
+      "id": "ask_expired",
+      "title": "冻结期间提问变化",
+      "image": "screenshots/ask_expired-image-0.png",
+      "group": "异步协作",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "画布保存挂起期间修改问题、勾选、选择、所在画布或关闭面板：本次发送结束，不建立上下文与运行；面板保留新输入并说明",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。通过拦截 PUT /canvases 挂起保存；上下文返回期间修改勾选时，上下文记入记录，面板不采用。"
+    },
+    {
+      "id": "card_click",
+      "title": "讨论卡片点击与编辑",
+      "image": "screenshots/card_click-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "overlay",
+      "evidence": "observed",
+      "state": "空白点击、双击展开编辑、选段、键入、回车、拖动、焦点切换均无 schema 错误；随选择变化的操作放在固定高度的一行，画布不再下移",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。修复前在「交接验收：连线与提问」中 3 张讨论卡片的下部空白点击复现 affine:paragraph / affine:surface 错误。"
+    },
+    {
+      "id": "visual_library",
+      "title": "提问截图列表",
+      "image": "screenshots/visual_library-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "截图经 visual-assets 保存，文稿数量不变；可移出本轮、按已有截图重新加入；空引用截图可永久清理，已有引用时列出 asset_in_use 的引用位置",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。"
+    },
+    {
+      "id": "image_document",
+      "title": "图片文稿按图像读取",
+      "image": "screenshots/image_document-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "勾选“以图像读取”后请求附 visuals（图片文稿的 source_asset_id 与卡片实例），上下文正文来源为 0，模型按图像回答",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。"
+    },
+    {
+      "id": "ask_vision_error",
+      "title": "模型不读取图像",
+      "image": "screenshots/ask_vision_error-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "前端按 vision_models 先给出提示，发送仍由服务以 vision_unsupported 拒绝；问题、选择与勾选保留，取消图像后再次发送成功",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。独立实例 8795，vision_models 为空。"
+    },
+    {
+      "id": "ask_image_budget",
+      "title": "图像超出上限",
+      "image": "screenshots/ask_image_budget-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "服务以 image_budget_exceeded 拒绝（图片文稿没有前端提前检查）；说明显示一次，输入保留，调整材料后再次发送成功",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。独立实例 8796，max_input_image_bytes = 1。"
+    },
+    {
+      "id": "proposal_rebase",
+      "title": "提案按当前画布确认",
+      "image": "screenshots/proposal_rebase-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "另一客户端更新画布后确认写入：前端载入服务端画布并显示版本差异，“按当前画布确认写入”以新版本 PATCH 并 apply；重复 apply 返回同一事务",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。两个浏览器上下文同时操作画布「P1 并发 E」。"
+    },
+    {
+      "id": "proposal_dependent",
+      "title": "依赖撤销提示",
+      "image": "screenshots/proposal_dependent-image-0.png",
+      "group": "画布共创",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "提案新建的文稿被画布 F 引用后撤销：显示 dependent_changes 说明，文稿、两张画布的卡片与提案状态保持原样",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。"
+    },
+    {
+      "id": "merge_history",
+      "title": "合并后的引用版本",
+      "image": "screenshots/merge_history-image-0.png",
+      "group": "讨论",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "精确片段讨论分叉两个分支并合并；原稿改为 v2 并刷新后，合并上下文仍引用片段 v1 原文，锚点状态为“原文已改”",
+      "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。文稿内容取自 docs/Research_Canvas_Issues_2026-10-26.pdf 第 2 页。"
     }
   ],
   "edges": [
@@ -945,6 +1066,93 @@
       "to": "ask_budget",
       "action": "勾选材料超出上限",
       "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "run_pending",
+      "action": "发送后关闭提问框并切换画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "run_pending",
+      "to": "run_placed",
+      "action": "前往原画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "run_placed",
+      "action": "留在原画布，运行完成后自动放回",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_expired",
+      "action": "保存期间修改提问或切换画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "ask_expired",
+      "to": "canvas_ask",
+      "action": "确认后再次发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "card_click",
+      "action": "点击 / 双击讨论卡片",
+      "evidence": "observed",
+      "back": "关闭"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "visual_library",
+      "action": "截图列表",
+      "evidence": "observed",
+      "back": "收起"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "image_document",
+      "action": "勾选“以图像读取”并发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_vision_error",
+      "action": "附图像发送（未配置视觉模型）",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_ask",
+      "to": "ask_image_budget",
+      "action": "附图像发送（超出图像上限）",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_proposal",
+      "to": "proposal_rebase",
+      "action": "其他客户端更新画布后确认写入",
+      "evidence": "observed"
+    },
+    {
+      "from": "proposal_rebase",
+      "to": "proposal_materialized",
+      "action": "按当前画布确认写入",
+      "evidence": "observed"
+    },
+    {
+      "from": "proposal_materialized",
+      "to": "proposal_dependent",
+      "action": "新文稿被其他画布引用后撤销",
+      "evidence": "observed"
+    },
+    {
+      "from": "merge_ctx",
+      "to": "merge_history",
+      "action": "修改原稿并刷新后查看合并上下文",
+      "evidence": "observed",
+      "back": "关闭"
     }
   ],
   "pending": [
@@ -953,25 +1161,13 @@
       "reason": "自动化浏览器无法驱动系统输入法；输入框按 isComposing 跳过回车发送，已从源码确认，未做真机 IME 操作。"
     },
     {
-      "title": "带依赖的撤销提示",
-      "reason": "dependent_changes 409 已接入提示；实测中先触发的是关系已修改与版本冲突，未单独构造“候选文稿被其他画布引用”的情形。"
-    },
-    {
       "title": "保存冲突（409）提示条",
-      "reason": "需要两个客户端同时编辑同一文稿；冲突处理代码已接入，本轮未构造并发写入。"
+      "reason": "两个客户端的画布保存冲突已于 2026-10-26 实测（409、保留本地修改、载入服务器版本）；同一文稿的并发保存冲突未单独构造。"
     },
     {
       "title": "从原输出恢复成功",
       "reason": "验证库中剩余的失败运行均为内容错误，恢复接口正确拒绝；没有可恢复的围栏输出样本，恢复成功后打开提案的路径未实际触发。"
-    },
-    {
-      "title": "vision_unsupported 与 image_budget_exceeded",
-      "reason": "本机只配置了一个且支持视觉的模型、图像上限 20MB，未能触发；界面按 vision_models 提示改用视觉模型，两种错误按服务返回的说明显示。"
-    },
-    {
-      "title": "图片文稿的视觉材料",
-      "reason": "本轮实测了选区截图；画布中图片文稿的“以图像读取”材料共用同一 visuals 路径，未单独操作。"
     }
   ],
-  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。 交接任务节点（link_views、relate_candidate、bridge_details、ask_*、canvas_stale、canvas_conflict、proposal_materialized、proposal_reverted）来自 2026-10-25 对后端 6bc427f 的实测。"
+  "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。 交接任务节点（link_views、relate_candidate、bridge_details、ask_*、canvas_stale、canvas_conflict、proposal_materialized、proposal_reverted）来自 2026-10-25 对后端 6bc427f 的实测。 异步协作与图像管理节点（run_pending、run_placed、ask_expired、card_click、visual_library、image_document、ask_vision_error、ask_image_budget、proposal_rebase、proposal_dependent、merge_history）来自 2026-10-26 对后端 f49d8ad 的实测。"
 }
