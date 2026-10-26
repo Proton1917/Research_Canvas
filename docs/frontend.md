@@ -40,7 +40,8 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **文稿保存**：每次保存同时提交文本块投影、Markdown 与 `editor_state`（`blocksuite-yjs-v1`，Y.Doc 更新的 Base64）。编辑后约 1.2 秒自动保存，页面隐藏时立即保存。版本冲突（409）时保留本地内容，用户可选择保留本地或载入服务器版本。
 - **文本块投影**：块标识沿用编辑器块标识。标题、引用、列表、代码、公式块写成 Markdown 前缀，行内公式写成 `$…$`，表格写成 GFM 表格。投影可逆：服务端改写清除 `editor_state` 后，前端按文本块重建结构。投影规则新增块类型后，已保存文稿首次打开时自动补存一次文本块，编辑状态保持不变。
 - **锚点**：选段按块内投影文本的 UTF-16 偏移记录，并附带文稿版本。原文修订后由后端返回原位、已重定位、原文已改、定位失效或多处匹配。
-- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿首次打开时只做 Markdown 结构转换，不立即写回；首次编辑、创建批注或发起上下文时再保存，因此未改动的候选文稿可整组撤销。
+- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿首次打开时只做 Markdown 结构转换，不立即写回；首次编辑、创建批注或发起上下文时再保存，因此未改动的候选文稿可整组撤销。`flushAll`（页面隐藏或刷新、切换工作区、导出）跳过这类仅有显示转换的文稿，服务端版本保持不变。
+- **首次打开的 Markdown 来源**：`markdownSource` 对带 `markdown` 字段的 document、单块 discussion 及带 `metadata.canvas_proposal_id` 的单块 note 取 Markdown 原文，经 `MarkdownTransformer.importMarkdownToBlock` 建立标题、列表、加粗与公式。已有 `editor_state` 或历史编辑状态的文稿按保存内容载入，不再转换。画布卡片与精读视图共用同一文稿 store，显示一致。
 - **画布**：卡片是 `affine:embed-synced-doc`，引用统一文稿；同一文稿可出现在多张画布。画布标题栏下方是固定高度的选择操作行（提问、展开编辑、研究联系等），选择变化时画布位置保持不变。`editor_state` 使用 `view_version: 2`：
   - `link_views`：连线标识 → `{relation_id, source_instance, target_instance, detached_from}`。
   - `hidden_relations`：本画布隐藏的研究关系。
@@ -110,6 +111,37 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **讨论**：侧栏讨论的预览与发送先保存所选文稿；材料在冻结后被修改时（`stale_context`）载入新版本并重新冻结。预览上下文与发送使用同一 `context_id`；生成结果以 SSE 流式显示，回答按 Markdown（含表格与公式）渲染并保存为讨论文稿。讨论脉络按上下文关系组织，合并讨论挂在最近的直接分支下。
 
 ## 验证记录
+
+### 2026-10-26 画布提案便笺的 Markdown 显示
+
+问题：画布「P0 归位 B 000319」（`6baeb427-…`）中的卡片 `JRAtU5xzzU`，对应文稿 `51e99000-61f6-4a83-9093-6e21a0290fae`（note，v1，由画布提案 `7bfdfdc6-…` 新建，`editor_state` 与 `markdown` 均为 null）。正文是单个文本块：`### 保持的结构与运算`，随后是三个 `- **…**：` 列表项，含行内公式。原先 `markdownSource` 不处理 note，这块正文走 `buildStoreFromBlocks`，被 `parseStructured` 整块当作 h3 标题，列表符号和 `**` 按字面显示。
+
+修复：
+- `markdownSource` 增加单块且带 `canvas_proposal_id` 的 note 分支，复用现有的 Markdown 导入和 deferred 行为。
+- 验收时发现：打开提案文稿后刷新页面，`visibilitychange` 触发的 `flushAll` 会对文稿调用 `flushDocument`，把 deferred 文稿写成 v2（`edit`）。这会让首次显示改变服务端版本，整组撤销随之因版本不一致失败。现在 `flushAll` 跳过 deferred 文稿；创建锚点、冻结上下文等明确需要版本的操作仍经 `flushDocument` 写回。
+
+环境：`dist` 为本次构建。8794 使用 `.runtime/frontend-issues.toml` 原库，只做显示检查。编辑与撤销在 8797 进行（`tmp/frontend-issues/note.toml`），数据库是 8794 库在本轮启动前的副本，每组开始前重置。浏览器为 Playwright 驱动的 Chrome。脚本为 `note_md.py`、`note_md_copy.sh`、`note_revert.py`、`note_revert.sh`，结果为 `note-md-*.json`、`note-revert.json`，截图为 `shots/note-md-*.png`、`shots/note-revert-*.png`，均在 `tmp/frontend-issues/`。
+
+已验证：
+- **现有文稿显示**（8794，原库，`note-md-8794.json`）：画布卡片、精读视图、刷新后的精读视图、新页面中的画布卡片，四处结果相同：
+  - 1 个 h3 标题“保持的结构与运算”；
+  - 3 个独立的 `affine-list` 列表项；
+  - 加粗“路径级联与余积映射”“时间反演与对极元（Antipode）”“扰动级数与分枝积分”；
+  - 4 个行内公式由 KaTeX 渲染；
+  - 文本中没有字面的 `**`、`- `、`$…$` 或 `###`。
+  
+  全程文稿保持 v1，单块，没有 `editor_state`；画布保持 r2；控制台无错误。
+- **编辑后保存**（8797 副本，`note-md-8797-edit.json`）：首次打开和刷新后均为 v1。在第三个列表项末尾键入“（已核对）”后，保存为 v2（reason 为 `edit`），带 `editor_state`，文本块投影为标题加三个 `- ` 列表项共 4 块。刷新后，精读视图和画布卡片都还是 3 个列表项、4 处加粗、4 个公式。
+- **整组撤销**（8797 副本，`note-revert.json`）：文稿 `51e99000` 所属提案在画布 r26 应用，主画布已到 r47，撤销按画布版本返回 409，无法用它验证撤销。因此在副本上新建画布，经“在画布上创建”生成新的 note 提案（`### 结构要点` 加三个 `- **短语**：…$…$` 列表项）。确认写入后：
+  - 卡片和精读视图显示 h3 标题、3 个列表项、加粗和 3 个公式；
+  - 刷新后文稿仍为 v1，画布仍停在 r3；
+  - 再次刷新，从运行记录打开提案，点“撤销本次写入”：提案变为 `reverted`，文稿返回 404，卡片移除，画布到 r4，控制台无错误。
+  
+  后端撤销会核对新建文稿版本（`src/canvas_proposal.rs` 的 `revert`）。修复前，同样的刷新会把文稿写成 v2；本轮首次在原库运行时已出现这一情况，之后用启动前副本恢复了原库（文稿回到 v1，版本记录 126 条）。
+
+未实测：
+- 已有 `editor_state` 的旧 note 文稿：没有改动其载入路径。
+- 多块 note：仍按文本块载入，不做 Markdown 转换。
 
 ### 2026-10-26 异步讨论归位、提问归属、卡片点击与图像管理
 

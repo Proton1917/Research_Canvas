@@ -469,13 +469,13 @@ export class ResearchSession {
     return entry.status.version;
   }
 
-  /** 写入全部待保存内容，返回仍未保存的对象（冲突、失败或画布事务进行中）。 */
+  /** 写入全部待保存内容，返回仍未保存的对象（冲突、失败或画布事务进行中）。仅有首次显示转换的文稿保持服务端版本。 */
   async flushAll(): Promise<PendingSave[]> {
     const pending: PendingSave[] = [];
     const record = (kind: PendingSave['kind'], id: string, title: string, state: SaveState, error: unknown) =>
       pending.push({ kind, id, title, state, error: error instanceof Error ? error.message : String(error) });
     await Promise.all([
-      ...Array.from(this._docs.values()).filter(entry => !entry.readonly).map(entry =>
+      ...Array.from(this._docs.values()).filter(entry => !entry.readonly && !entry.deferred).map(entry =>
         this.flushDocument(entry.id).catch(error => record('document', entry.id, storeTitle(entry.store) || entry.doc.title, entry.status.state, error))),
       ...Array.from(this._canvases.values()).map(entry =>
         this.flushCanvas(entry.id).catch(error => record('canvas', entry.id, entry.canvas.name, entry.status.state, error))),
@@ -1083,11 +1083,12 @@ export class ResearchSession {
   }
 }
 
-/** 导入的 Markdown 与 AI 讨论正文首次打开时按 Markdown 结构建立编辑器内容。 */
+/** 导入的 Markdown、AI 讨论正文及 AI 画布提案便笺首次打开时按 Markdown 结构建立编辑器内容。 */
 function markdownSource(doc: ResearchDocument): string | null {
   if (doc.content.blocks.length > 1) return null;
   if (doc.kind === 'document' && doc.content.markdown) return doc.content.markdown;
   if (doc.kind === 'discussion' && doc.content.blocks[0]?.text) return doc.content.blocks[0].text;
+  if (doc.kind === 'note' && doc.metadata.canvas_proposal_id && doc.content.blocks[0]?.text) return doc.content.blocks[0].text;
   return null;
 }
 
