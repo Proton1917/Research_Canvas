@@ -12,10 +12,12 @@ mod model;
 mod math_text;
 mod provider;
 mod research;
+mod run_placement;
 mod scene;
 mod scene_projection;
 mod transfer;
 mod visual;
+mod visual_assets;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
@@ -97,6 +99,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/runs/{id}", get(api::get_run))
         .route("/runs/{id}/events", get(api::run_events))
         .route("/runs/{id}/cancel", post(api::cancel_run))
+        .route("/runs/{id}/place", post(run_placement::place))
         .route("/runs/{id}/recover-canvas-proposal", post(canvas_proposal::recover))
         .route("/proposals/{id}", get(api::get_proposal))
         .route("/proposals/{id}/apply", post(api::apply_proposal))
@@ -107,6 +110,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/canvas-proposals/{id}/revert", post(canvas_proposal::revert))
         .route("/canvas-proposals/{id}/reject", post(canvas_proposal::reject))
         .route("/workspaces/{id}/imports", post(transfer::import_file))
+        .route("/workspaces/{id}/visual-assets", get(visual_assets::list).post(visual_assets::upload))
+        .route("/workspaces/{id}/visual-assets/{asset_id}", axum::routing::delete(visual_assets::discard))
         .route("/assets/{id}", get(transfer::get_asset))
         .route("/workspaces/{id}/search", get(api::search))
         .route("/workspaces/{id}/export", get(transfer::export_json))

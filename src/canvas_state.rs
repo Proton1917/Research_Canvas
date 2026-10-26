@@ -86,26 +86,51 @@ fn locate<T: ReadTxn>(endpoint: &Endpoint, proposal: &CanvasProposal, blocks: &M
     }
 }
 
+fn surface(canvas: &Canvas, blocks: &MapRef, txn: &mut TransactionMut) -> Result<MapRef> {
+    if canvas.editor_state.is_some() {
+        blocks.iter(txn).find_map(|(_, value)| match value { Out::YMap(block) if block.get(txn, "sys:flavour").is_some_and(|flavour| flavour.to_string(txn) == "affine:surface") => Some(block), _ => None }).ok_or_else(|| ApiError::invalid("画布缺少绘制表面"))
+    } else {
+        let root = block(blocks, txn, &id(), "affine:page", 2);
+        root.insert(txn, "prop:title", TextPrelim::new(&canvas.name));
+        let surface_id = id();
+        let surface = block(blocks, txn, &surface_id, "affine:surface", 5);
+        append(&root, txn, &surface_id)?;
+        let boxed = surface.insert(txn, "prop:elements", MapPrelim::default());
+        boxed.insert(txn, "type", "$blocksuite:internal:native$");
+        boxed.insert(txn, "value", MapPrelim::default());
+        for object in &canvas.objects { card(blocks, &surface, txn, object)?; }
+        Ok(surface)
+    }
+}
+
+fn link_views<T: ReadTxn>(state: &Value, elements: &MapRef, txn: &T) -> Result<serde_json::Map<String, Value>> {
+    let mut views = state["link_views"].as_object().cloned().unwrap_or_default();
+    if state.get("link_views").is_none() {
+        for (id, element) in elements.iter(txn) {
+            let element = serde_json::to_value(element.to_json(txn))?;
+            if element["type"] == "connector" { views.insert(id.into(), json!({"view_id":id,"connector_id":id,"relation_id":state["links"][id],"source_instance":element["source"]["id"],"target_instance":element["target"]["id"],"created_at":now()})); }
+        }
+    }
+    Ok(views)
+}
+
+fn finish(canvas: &mut Canvas, mut state: Value, views: serde_json::Map<String, Value>, blocks: &MapRef, txn: &TransactionMut) -> Result<()> {
+    state["links"] = Value::Object(views.iter().filter(|(_, view)| view["relation_id"].is_string()).map(|(id, view)| (id.clone(), view["relation_id"].clone())).collect());
+    state["link_views"] = Value::Object(views);
+    state["view_version"] = json!(2);
+    state["update"] = json!(STANDARD.encode(txn.encode_state_as_update_v1(&StateVector::default())));
+    canvas.objects = project_blocks(blocks, txn)?;
+    canvas.editor_state = Some(state);
+    Ok(())
+}
+
 // 同一个编辑事务生成 Yjs、对象布局和新增连线，保留原有内容及格式。
 pub fn materialize(before: &Canvas, canvas: &mut Canvas, proposal: &CanvasProposal) -> Result<()> {
     let doc = match &before.editor_state { Some(state) => decode(state)?, None => Doc::new() };
     let blocks = doc.get_or_insert_map("blocks");
     let mut txn = doc.transact_mut();
-    let mut state = before.editor_state.clone().unwrap_or_else(|| json!({"format":"blocksuite-yjs-v1"}));
-    let surface = if before.editor_state.is_some() {
-        blocks.iter(&txn).find_map(|(_, value)| match value { Out::YMap(block) if block.get(&txn, "sys:flavour").is_some_and(|flavour| flavour.to_string(&txn) == "affine:surface") => Some(block), _ => None }).ok_or_else(|| ApiError::invalid("画布缺少绘制表面"))?
-    } else {
-        let root = block(&blocks, &mut txn, &id(), "affine:page", 2);
-        root.insert(&mut txn, "prop:title", TextPrelim::new(&before.name));
-        let surface_id = id();
-        let surface = block(&blocks, &mut txn, &surface_id, "affine:surface", 5);
-        append(&root, &mut txn, &surface_id)?;
-        let boxed = surface.insert(&mut txn, "prop:elements", MapPrelim::default());
-        boxed.insert(&mut txn, "type", "$blocksuite:internal:native$");
-        boxed.insert(&mut txn, "value", MapPrelim::default());
-        for object in &before.objects { card(&blocks, &surface, &mut txn, object)?; }
-        surface
-    };
+    let state = before.editor_state.clone().unwrap_or_else(|| json!({"format":"blocksuite-yjs-v1"}));
+    let surface = surface(before, &blocks, &mut txn)?;
     let boxed = map(surface.get(&txn, "prop:elements"))?;
     let elements = map(boxed.get(&txn, "value"))?;
     for action in &proposal.actions {
@@ -121,13 +146,7 @@ pub fn materialize(before: &Canvas, canvas: &mut Canvas, proposal: &CanvasPropos
             _ => {},
         }
     }
-    let mut views = state["link_views"].as_object().cloned().unwrap_or_default();
-    if state.get("link_views").is_none() {
-        for (id, element) in elements.iter(&txn) {
-            let element = serde_json::to_value(element.to_json(&txn))?;
-            if element["type"] == "connector" { views.insert(id.into(), json!({"view_id":id,"connector_id":id,"relation_id":state["links"][id],"source_instance":element["source"]["id"],"target_instance":element["target"]["id"],"created_at":now()})); }
-        }
-    }
+    let mut views = link_views(&state, &elements, &txn)?;
     for action in &proposal.actions {
         if let CanvasAction::CreateRelation { key, source, target, .. } = action {
             if let (Some(source), Some(target)) = (locate(source, proposal, &blocks, &elements, &txn, &state), locate(target, proposal, &blocks, &elements, &txn, &state)) {
@@ -139,11 +158,25 @@ pub fn materialize(before: &Canvas, canvas: &mut Canvas, proposal: &CanvasPropos
             }
         }
     }
-    state["links"] = Value::Object(views.iter().filter(|(_, view)| view["relation_id"].is_string()).map(|(id, view)| (id.clone(), view["relation_id"].clone())).collect());
-    state["link_views"] = Value::Object(views);
-    state["view_version"] = json!(2);
-    state["update"] = json!(STANDARD.encode(txn.encode_state_as_update_v1(&StateVector::default())));
-    canvas.objects = project_blocks(&blocks, &txn)?;
-    canvas.editor_state = Some(state);
-    Ok(())
+    finish(canvas, state, views, &blocks, &txn)
+}
+
+pub fn place_discussion(canvas: &mut Canvas, object: &CanvasObject, source_ids: &[String]) -> Result<()> {
+    let doc = match &canvas.editor_state { Some(state) => decode(state)?, None => Doc::new() };
+    let blocks = doc.get_or_insert_map("blocks");
+    let mut txn = doc.transact_mut();
+    let state = canvas.editor_state.clone().unwrap_or_else(|| json!({"format":"blocksuite-yjs-v1"}));
+    let surface = surface(canvas, &blocks, &mut txn)?;
+    let boxed = map(surface.get(&txn, "prop:elements"))?;
+    let elements = map(boxed.get(&txn, "value"))?;
+    let mut views = link_views(&state, &elements, &txn)?;
+    card(&blocks, &surface, &mut txn, object)?;
+    for source in source_ids {
+        if !blocks.contains_key(&txn, source) && !elements.contains_key(&txn, source) { continue; }
+        let id = format!("{}:source:{source}", object.id);
+        let connector = elements.insert(&mut txn, id.clone(), MapPrelim::default());
+        for (key, value) in [("id", Any::from(id.clone())), ("type", Any::from("connector")), ("index", Any::from("a0")), ("mode", Any::from(2)), ("stroke", Any::from("#8e6cdf")), ("strokeStyle", Any::from("solid")), ("strokeWidth", Any::from(2)), ("source", yrs::any!({"id":source.clone()})), ("target", yrs::any!({"id":object.id.clone()}))] { connector.insert(&mut txn, key, value); }
+        views.insert(id.clone(), json!({"view_id":id,"connector_id":id,"relation_id":null,"source_instance":source,"target_instance":object.id,"created_at":now()}));
+    }
+    finish(canvas, state, views, &blocks, &txn)
 }

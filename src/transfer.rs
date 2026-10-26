@@ -9,7 +9,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::{AppState, db, error::{ApiError, Result}, model::*, research};
 
-pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path<String>, mut multipart: Multipart) -> Result<(StatusCode, Json<Value>)> {
+pub async fn read_upload(mut multipart: Multipart) -> Result<(String, String, axum::body::Bytes)> {
     let mut upload = None;
     while let Some(field) = multipart.next_field().await.map_err(|error| ApiError::invalid(error.to_string()))? {
         if field.name() != Some("file") { continue; }
@@ -19,7 +19,11 @@ pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path
         if upload.is_some() { return Err(ApiError::invalid("每次导入一个文件")); }
         upload = Some((filename, media_type, data));
     }
-    let (filename, mut media_type, data) = upload.ok_or_else(|| ApiError::invalid("缺少 file 字段"))?;
+    upload.ok_or_else(|| ApiError::invalid("缺少 file 字段"))
+}
+
+pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path<String>, multipart: Multipart) -> Result<(StatusCode, Json<Value>)> {
+    let (filename, mut media_type, data) = read_upload(multipart).await?;
     let extension = std::path::Path::new(&filename).extension().and_then(|extension| extension.to_str()).unwrap_or("").to_lowercase();
     let (kind, content) = if extension == "pdf" || media_type == "application/pdf" {
         let directory = tempfile::Builder::new().prefix("pdf-").tempdir_in(&state.config.temporary_directory)?;
@@ -52,7 +56,7 @@ pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path
         (DocumentKind::Document, content)
     } else { return Err(ApiError::invalid("支持 PDF、Markdown、UTF-8 文本和图片文件")); };
     let size = data.len();
-    let asset = Asset { id: id(), workspace_id: workspace_id.clone(), filename: filename.clone(), media_type, data_base64: STANDARD.encode(data), created_at: now() };
+    let asset = Asset { id: id(), workspace_id: workspace_id.clone(), filename: filename.clone(), media_type, data_base64: STANDARD.encode(data), created_at: now(), temporary: false };
     let document = db::new_document(workspace_id, filename, kind, content, json!({"source_asset_id":asset.id,"source_filename":asset.filename}));
     let result = state.db.call(move |connection| {
         let transaction = connection.transaction()?;
@@ -250,6 +254,7 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
     let proposal_ids: HashSet<_> = archive.proposals.iter().map(|proposal| &proposal.id).collect();
     let canvas_proposal_ids: HashSet<_> = archive.canvas_proposals.iter().map(|proposal| &proposal.id).collect();
     for context in &archive.contexts {
+        if let Some(origin) = &context.origin { validate_origin(archive, origin)?; }
         for visual in &context.visuals {
             if !archive.assets.iter().any(|asset| asset.id == visual.asset_id) || visual.object_ids.is_empty() || visual.object_ids.iter().any(|id| !context.scenes.iter().any(|scene| scene.objects.iter().any(|object| &object.id == id))) { return Err(ApiError::invalid("归档视觉材料的资产或场景对象缺失")); }
         }
@@ -270,6 +275,7 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
         }
     }
     for run in &archive.runs {
+        if let Some(origin) = &run.origin { validate_origin(archive, origin)?; }
         if run.canvas_proposal_id.as_ref().is_some_and(|id| !canvas_proposal_ids.contains(id)) { return Err(ApiError::invalid("画布提案运行记录引用不完整")); }
         if !context_ids.contains(&run.context_id) || run.document_id.as_ref().is_some_and(|id| !documents.contains(id)) || run.proposal_id.as_ref().is_some_and(|id| !proposal_ids.contains(id)) { return Err(ApiError::invalid("运行记录引用不完整")); }
     }
@@ -281,6 +287,12 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
         let context = archive.contexts.iter().find(|context| context.id == proposal.context_id).ok_or_else(|| ApiError::invalid("画布提案上下文缺失"))?;
         crate::canvas_proposal::validate_archive(proposal, context, &documents)?;
     }
+    Ok(())
+}
+
+fn validate_origin(archive: &WorkspaceArchive, origin: &RunOrigin) -> Result<()> {
+    if !archive.canvases.iter().any(|canvas| canvas.id == origin.canvas_id) { return Err(ApiError::invalid("运行归位画布缺失")); }
+    if let Some(bounds) = &origin.write_region { bounds.validate()?; }
     Ok(())
 }
 

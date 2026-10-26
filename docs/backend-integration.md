@@ -106,9 +106,21 @@ type CanvasProposal = {
 
 ## 选中图像
 
-图片或局部画布截图经工作区导入接口保存为资产。场景请求附 `visuals:[{asset_id,object_ids}]`，`object_ids` 指向本轮明确选入的场景对象。支持 PNG、JPEG、WebP、GIF，几何、文字和来源仍使用场景字段。上下文保存资产引用，分支继承和归档恢复一并保留。
+图片文稿经工作区导入接口保存。局部截图使用 `POST /workspaces/{id}/visual-assets`，直接返回资产信息，文稿列表保持原样。场景请求附 `visuals:[{asset_id,object_ids}]`，`object_ids` 指向本轮明确选入的场景对象。支持 PNG、JPEG、WebP、GIF，几何、文字和来源仍使用场景字段。上下文保存资产引用，分支继承和归档恢复一并保留。
 
 后端将资产内容转换为模型协议的图像输入：Anthropic Messages 使用 Base64 image block，Chat Completions 使用 data URL image_url。图像前的文字说明列出资产及对应对象标识。文字模式配置遇到图像输入时返回 `vision_unsupported`，界面提供模型选择和材料调整。图像总字节超过配置上限时返回 `image_budget_exceeded`。
+
+`api.uploadVisual`、`api.listVisualAssets`、`api.discardVisual` 已提供类型化调用。截图列表附 `references`；删除存在引用的图像返回 `asset_in_use` 和引用位置。前端将移除本轮材料与永久清理作为两个明确操作，保留历史来源。完整字段见 [HTTP 接口](api.md#提问截图资产)。
+
+## 异步讨论归位
+
+场景上下文和运行均返回 `origin: {canvas_id,source_ids,write_region}`。来源属于发问时保存的场景；完整材料和问题由运行的 `context_id` 读取。`Run.placement` 记录已完成的归位，结构为 `{object_id,canvas_revision}`。来源为空的历史运行继续支持手动放置。
+
+`api.placeRun(runId, {expected_canvas_revision,bounds?})` 调用 `POST /runs/{id}/place`，返回 `{run,canvas}`。后端依据运行来源选择目标画布，在一次事务中生成卡片、纯视觉来源线及归位记录。冻结范围优先于请求中的 `bounds`；空范围由前端提供卡片坐标和尺寸。重复请求返回已保存记录及当前画布。冲突返回 409，前端处理现有编辑后再次发起。
+
+前端以运行记录维护待归位状态，目标画布挂载时完成本地保存、归位和服务端状态载入。当前视图属于其他画布或文稿时，运行记录展示原画布入口。提问面板关闭后保留运行记录。刷新时读取成功运行中的 `origin` 和 `placement`，恢复待归位提示。当前工作区与运行工作区分别按各自标识更新状态。
+
+冻结流程持有发起时的提问会话、代次及画布操作对象。用户改变选择、问题、材料、区域、模式、截图或所在画布时推进代次。在保存完成、上下文返回、运行创建返回三个异步边界处理所属会话；过期结果保留于对应记录，当前面板继续显示新输入。前端具体实现与交互验收见本地 `frontend-handoff.md`。
 
 ## 研究关系和人工确认
 
@@ -168,3 +180,28 @@ type ReviewRequest = {
 构建安装使用 `bash scripts/backend.sh build`，启动使用 `bash scripts/backend.sh start`。前端继续通过同源 `/api` 调用。画布模式提示词为 `config/prompts/canvas.txt`，通过服务配置的 `[prompts].canvas` 载入。
 
 `tests/canvas_acceptance.py` 使用用户提供的七页产品共识 PDF 与实际模型响应，按 `contexts`、`proposals`、`reviews`、`projection`、`archive`、`undo_evidence`、`archive_scope` 分阶段执行。结果保存在 `.runtime/canvas-acceptance.json`；已成功的阶段复用记录。`tests/canvas_handoff_acceptance.py` 使用前端验收中保存的失败输出、片段和想法验证解析恢复及类型化端点。归档格式为 3，保留场景、画布提案、研究计划字段及人工确认记录。
+
+### 异步来源与图像回归
+
+`tests/issues_acceptance.py` 使用 `docs/Research_Canvas_Issues_2026-10-26.pdf` 和其第一页 PNG，在 `.runtime/issues/` 建立独立数据库。服务使用 8791；归档恢复与图像配置使用 8792、8793。脚本管理实例启动与退出，运行结果保存于 `acceptance.json`。
+
+本轮在 macOS Apple Silicon 上完成 Rust 构建及包含类型检查的前端生产构建。模型请求使用本机 Router 的 `cc/gemini-3.8-flash-high`，七次成功响应中的 `model_used` 均为 `gemini-3.8-flash-n`。
+
+| 验收事项 | 实际结果 |
+| --- | --- |
+| 运行期间编辑目标画布 | 旧版本归位返回 409，原运行保持待归位 |
+| 两个客户端同时归位 | 返回同一卡片及归位记录，画布版本递增一次，另一张画布保持原样 |
+| 来源实例位于画布之外 | 讨论卡片保存成功，来源连线集合保持原样 |
+| 截图资产 | 上传保持文稿数量；空引用截图删除成功；冻结引用返回 `asset_in_use` |
+| 临时截图与图片文稿 | 实际图像输入读取出清单事项；上下文正文 sources 为空 |
+| 图像配置 | 空 vision_models 返回 `vision_unsupported`；1 字节预算返回 `image_budget_exceeded`，上下文保留 |
+| 并发移动与提案编辑 | 同版本的两次写入分别返回成功及 409；用户确认新基准后应用成功 |
+| 重复应用与依赖撤销 | 两次 apply 返回同一事务；其他画布引用后撤销返回 `dependent_changes`，文稿和画布保留 |
+| 分支与合并 | 两个分支和合并均完成实际模型运行；原文稿版本更新后，合并保持原片段及版本 |
+| 归档与重启 | 空数据库恢复内容与导出一致；重启后运行来源、归位及冻结材料可读取 |
+
+按依赖顺序执行 `prepare`、`placement`、`assets`、`archive`、`image_errors`、`proposals`、`branches`、`absent_source`、`restart`，命令形式为 `conda run --no-capture-output -n base python tests/issues_acceptance.py <阶段>`。已有成功记录在相同条件下复用。
+
+页面检查使用 `tests/issues_browser.py`，由 Web 应用测试技能的 `with_server.py` 启动独立实例。内置浏览器在本轮返回 `native pipe path unavailable`，随后使用实际 Chrome。保存的 DOM、截图及页面错误列表确认服务端生成的讨论卡片显示回答正文，来源线指向该卡片，页面错误列表为空。证据位于 `.runtime/issues/browser.json` 和 `.runtime/issues/canvas.png`。
+
+跨画布运行、慢保存期间修改选择、提问框关闭、卡片空白点击及清理入口的交互实现与验收由前端交接负责。本节的浏览器证据覆盖已生成画布的载入和显示。

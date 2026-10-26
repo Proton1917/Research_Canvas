@@ -318,13 +318,6 @@ pub struct ApplyInput {
     #[serde(default, rename = "editor_state")] pub _editor_state: Option<serde::de::IgnoredAny>,
 }
 
-fn save_canvas(connection: &Connection, canvas: &mut Canvas) -> Result<()> {
-    canvas.revision += 1;
-    canvas.updated_at = now();
-    connection.execute("UPDATE canvases SET name=?,revision=?,objects=?,editor_state=?,updated_at=? WHERE id=?", params![canvas.name, canvas.revision, db::encode(&canvas.objects)?, canvas.editor_state.as_ref().map(db::encode).transpose()?, canvas.updated_at, canvas.id])?;
-    db::touch(connection, &canvas.workspace_id)
-}
-
 fn application_response(proposal: &CanvasProposal) -> Result<Value> {
     let application = proposal.application.as_ref().ok_or_else(|| ApiError::internal("提案缺少应用记录"))?;
     let reverted = proposal.status == ProposalStatus::Reverted;
@@ -381,7 +374,7 @@ pub async fn apply(State(state): State<AppState>, Path(id): Path<String>, Json(i
             }
         }
         crate::canvas_state::materialize(&application.before_canvas, &mut canvas, &proposal)?;
-        save_canvas(&transaction, &mut canvas)?;
+        db::save_canvas(&transaction, &mut canvas)?;
         application.canvas = canvas;
         proposal.application = Some(application);
         proposal.status = ProposalStatus::Applied;
@@ -443,7 +436,7 @@ pub async fn revert(State(state): State<AppState>, Path(id): Path<String>, Json(
         }
         let mut restored = application.before_canvas.clone();
         restored.revision = current.revision;
-        save_canvas(&transaction, &mut restored)?;
+        db::save_canvas(&transaction, &mut restored)?;
         application.reverted_canvas = Some(restored);
         proposal.status = ProposalStatus::Reverted;
         proposal.revision += 1;

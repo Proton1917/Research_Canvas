@@ -215,6 +215,7 @@ export type ResearchContext = {
   freshness?: { documents: Record<string, number>; canvases: Record<string, number> } | null;
   /** 本轮的图像输入 */
   visuals?: SceneVisual[];
+  origin?: RunOrigin | null;
   messages: ChatMessage[];
   character_count: number;
   created_at: string;
@@ -245,11 +246,16 @@ export type Run = {
   document_id: string | null;
   proposal_id: string | null;
   canvas_proposal_id?: string | null;
+  origin?: RunOrigin | null;
+  placement?: { object_id: string; canvas_revision: number } | null;
   created_at: string;
   updated_at: string;
 };
 
 export type RunProgress = { sequence: number; run: Run };
+
+export type RunOrigin = { canvas_id: string; source_ids: string[]; write_region: Bounds | null };
+export type RunPlacementResult = { run: Run; canvas: Canvas };
 
 export type ProposalStatus = 'pending' | 'applied' | 'reverted' | 'rejected';
 
@@ -268,6 +274,10 @@ export type Proposal = {
 export type ProposalResult = { proposal: Proposal; document: ResearchDocument };
 
 export type ImportedAsset = { id: string; filename: string; media_type: string; byte_length: number; url: string };
+export type VisualAsset = ImportedAsset & {
+  created_at: string;
+  references: Array<{ type: 'context' | 'document' | 'document_version' | 'canvas' | 'canvas_proposal'; id: string; version: number | null }>;
+};
 export type ImportResult = { document: ResearchDocument; asset: ImportedAsset };
 
 export type SearchHit = { document_id: string; title: string; version: number; score: number; excerpt: string };

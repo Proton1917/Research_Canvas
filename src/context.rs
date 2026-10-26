@@ -150,6 +150,11 @@ pub fn build(connection: &Connection, workspace_id: String, input: ContextInput,
         append_source(connection, &mut sources, source)?;
     }
     for source in extra_sources { append_source(connection, &mut sources, source)?; }
+    let origin = scene.as_ref().map(|scene| RunOrigin {
+        canvas_id: scene.canvas_id.clone(),
+        source_ids: scene.objects.iter().filter(|object| !matches!(object.kind, crate::scene::SceneKind::Connector | crate::scene::SceneKind::Group | crate::scene::SceneKind::Frame)).map(|object| object.id.clone()).collect(),
+        write_region: scene.write_scope.bounds.clone(),
+    });
     if let Some(scene) = scene { scenes.push(scene); }
     if input.mode == ResearchMode::Canvas && scenes.last().is_none_or(|scene| !scene.write_scope.allow_create && scene.write_scope.object_ids.is_empty()) {
         return Err(ApiError::invalid("画布提案需要明确的目标画布及写入范围"));
@@ -159,5 +164,5 @@ pub fn build(connection: &Connection, workspace_id: String, input: ContextInput,
     let messages = vec![Message { role: "system".into(), content: prompt }, Message { role: "user".into(), content: format!("来源材料：\n{material}{scene_text}\n\n用户要求：\n{}", input.question) }];
     let mut ordered = Vec::new();
     for source in &sources { if !ordered.contains(&source.document_id) { ordered.push(source.document_id.clone()); } }
-    Ok(Context { id: id(), workspace_id, mode: input.mode, question: input.question, document_ids: input.document_ids, anchor_ids: input.anchor_ids, ordered_document_ids: ordered, sources, inherited_context_ids: inherited, scenes, character_count: messages.iter().map(|message| message.content.chars().count()).sum(), freshness: Some(freshness), visuals, messages, created_at: now() })
+    Ok(Context { id: id(), workspace_id, mode: input.mode, question: input.question, document_ids: input.document_ids, anchor_ids: input.anchor_ids, ordered_document_ids: ordered, sources, inherited_context_ids: inherited, scenes, character_count: messages.iter().map(|message| message.content.chars().count()).sum(), freshness: Some(freshness), visuals, origin, messages, created_at: now() })
 }

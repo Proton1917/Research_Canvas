@@ -82,7 +82,7 @@ pub async fn start_run(State(state): State<AppState>, Path(workspace_id): Path<S
         if !context.visuals.is_empty() && !provider.vision_models.contains(&model) { return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "vision_unsupported", "所选模型配置为文字输入，请选择支持视觉的模型或移除图像材料")); }
         let assets = crate::visual::load(connection, &context, &provider)?;
         let timestamp = now();
-        let run = Run { id: id(), workspace_id, context_id: context.id.clone(), model, status: RunStatus::Queued, answer: String::new(), model_used: None, usage: None, error: None, document_id: None, proposal_id: None, canvas_proposal_id: None, created_at: timestamp.clone(), updated_at: timestamp };
+        let run = Run { id: id(), workspace_id, context_id: context.id.clone(), model, status: RunStatus::Queued, answer: String::new(), model_used: None, usage: None, error: None, document_id: None, proposal_id: None, canvas_proposal_id: None, origin: context.origin.clone(), placement: None, created_at: timestamp.clone(), updated_at: timestamp };
         db::insert_run(connection, &run)?;
         Ok((context, run, assets))
     }).await?;

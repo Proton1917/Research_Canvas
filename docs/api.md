@@ -134,6 +134,36 @@ type ContextRequest = {
 
 `messages` 是实际发给模型的完整消息数组。上下文保存后保持固定；修改勾选材料或提问内容时重新生成预览。`GET /contexts/{id}` 可读取该快照。
 
+### 运行来源与归位
+
+场景上下文保存 `origin: {canvas_id, source_ids, write_region}`，分别表示本轮提问的画布、选中来源实例及讨论卡片区域。运行创建时复制该字段；`context_id` 指向完整冻结材料。文稿讨论和历史记录的 `origin` 可为 null。继承历史材料时，本轮场景决定新运行的归位位置。
+
+`Run.placement` 为 null 或 `{object_id, canvas_revision}`。成功讨论同时具有 `document_id`、`origin` 且 `placement` 为 null 时，表示等待放入原画布。运行列表、单项读取、事件流和归档均包含这两个字段。
+
+`POST /runs/{id}/place` 接收 `{expected_canvas_revision, bounds?}`，返回 `{run, canvas}`。目标画布由运行保存的 `origin.canvas_id` 确定。服务优先使用冻结的 `write_region`；该字段为 null 时由请求提供 `bounds`。尺寸和坐标采用画布世界坐标。
+
+归位在同一事务中生成讨论卡片、仍在目标画布中的来源连线、完整 Yjs、对象表及运行归位记录。来源对象已移走时保留讨论卡片，来源记录继续存于上下文。新增来源线的 `relation_id` 为 null。画布版本冲突返回 409 `version_conflict`；客户端保留编辑，处理冲突后重新发起。
+
+同一运行的重复归位返回原归位记录和目标画布的当前版本。已放置卡片的后续移动、编辑和删除由画布保存管理。前端在目标画布挂载后保存本地编辑，再调用归位；采用响应时遵循已有编辑器卸载与服务端版本载入流程。运行中的画布切换、提问框关闭及页面刷新，均可通过运行记录恢复目标画布信息。
+
+### 提问截图资产
+
+导入材料使用 `/workspaces/{id}/imports`。临时提问截图使用以下接口，上传响应直接提供资产信息，工作区文稿数量保持原值：
+
+| 方法与路径 | 请求与结果 |
+| --- | --- |
+| `POST /workspaces/{id}/visual-assets` | multipart `file`，支持 PNG、JPEG、WebP、GIF，返回截图资产 |
+| `GET /workspaces/{id}/visual-assets` | 返回截图资产列表及现有引用 |
+| `DELETE /workspaces/{id}/visual-assets/{asset_id}` | 显式清理空引用截图，成功返回 204 |
+
+截图资产包含 `{id,filename,media_type,byte_length,url,created_at,references}`。引用项为 `{type,id,version}`，类型包括 `context`、`document`、`document_version`、`canvas`、`canvas_proposal`。大小单位为字节。列表查询读取元信息，图像内容仍通过 `/assets/{id}` 获取。
+
+删除时在事务中检查冻结上下文、导入文稿、文稿历史版本、画布及提案撤销快照中的引用。存在引用时返回 409 `asset_in_use`，详情为 `{asset_id,references}`；图像和引用保持原样。冻结预览也是保存的来源记录，引用会显示在列表中。移除提问中的截图只调整本轮材料；永久删除通过可见清理操作执行。已有截图可通过资产标识再次加入提问。
+
+归档中的 `Asset.temporary` 标记提问截图类别，旧归档默认 false；是否可清理由当前引用决定。来源及归位字段随归档恢复保存。
+
+### 运行执行与事件
+
 `POST /workspaces/{id}/runs` 接收 `{context_id, model?, max_output_tokens?}`，立即返回运行记录。`GET /workspaces/{id}/runs` 返回该工作区的运行记录。`GET /runs/{id}` 返回当前运行状态，`POST /runs/{id}/cancel` 取消正在执行的运行。
 
 新上下文保存本轮材料版本于 `freshness`。`GET /contexts/{id}/freshness` 返回版本变化详情。发送遇到材料更新时返回 409 `stale_context`；超出本机文本或图像预算时返回 422 `context_budget_exceeded` 或 `image_budget_exceeded`。图像使用场景请求的 `visuals` 字段，支持模型、上限及完整接入数据见 [后端联调接口](backend-integration.md)。
@@ -146,6 +176,8 @@ type Run = {
   usage: unknown | null; error: string | null;
   document_id: string | null; proposal_id: string | null;
   canvas_proposal_id: string | null;
+  origin: {canvas_id: string; source_ids: string[]; write_region: Bounds | null} | null;
+  placement: {object_id: string; canvas_revision: number} | null;
   created_at: string; updated_at: string;
 };
 ```

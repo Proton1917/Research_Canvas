@@ -253,7 +253,22 @@ pub struct Context {
     pub freshness: Option<crate::context::Freshness>,
     #[serde(default)]
     pub visuals: Vec<crate::visual::VisualInput>,
+    #[serde(default)]
+    pub origin: Option<RunOrigin>,
     pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunOrigin {
+    pub canvas_id: String,
+    pub source_ids: Vec<String>,
+    pub write_region: Option<crate::scene::Bounds>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunPlacement {
+    pub object_id: String,
+    pub canvas_revision: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -288,6 +303,10 @@ pub struct Run {
     pub proposal_id: Option<String>,
     #[serde(default)]
     pub canvas_proposal_id: Option<String>,
+    #[serde(default)]
+    pub origin: Option<RunOrigin>,
+    #[serde(default)]
+    pub placement: Option<RunPlacement>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -328,6 +347,8 @@ pub struct Asset {
     pub media_type: String,
     pub data_base64: String,
     pub created_at: String,
+    #[serde(default)]
+    pub temporary: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

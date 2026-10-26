@@ -17,6 +17,10 @@ impl Db {
         connection.execute_batch(include_str!("schema.sql"))?;
         let has_canvas_proposal: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('runs') WHERE name='canvas_proposal_id')", [], |row| row.get(0))?;
         if !has_canvas_proposal { connection.execute("ALTER TABLE runs ADD COLUMN canvas_proposal_id TEXT", [])?; }
+        let has_origin: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('runs') WHERE name='origin')", [], |row| row.get(0))?;
+        if !has_origin { connection.execute_batch("BEGIN; ALTER TABLE runs ADD COLUMN origin TEXT; ALTER TABLE runs ADD COLUMN placement TEXT; COMMIT;")?; }
+        let has_temporary_assets: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('assets') WHERE name='temporary')", [], |row| row.get(0))?;
+        if !has_temporary_assets { connection.execute("ALTER TABLE assets ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0", [])?; }
         let has_endpoints: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('relations') WHERE name='source_ref')", [], |row| row.get(0))?;
         if !has_endpoints { connection.execute_batch(include_str!("migrations/research_endpoints.sql"))?; }
         connection.execute("UPDATE runs SET status='interrupted', error='服务进程中断，请根据已保存上下文重新发起', updated_at=? WHERE status IN ('queued','running')", [now()])?;
@@ -160,6 +164,13 @@ pub fn insert_canvas(connection: &Connection, canvas: &Canvas) -> Result<()> {
     Ok(())
 }
 
+pub fn save_canvas(connection: &Connection, canvas: &mut Canvas) -> Result<()> {
+    canvas.revision += 1;
+    canvas.updated_at = now();
+    connection.execute("UPDATE canvases SET name=?,revision=?,objects=?,editor_state=?,updated_at=? WHERE id=?", params![canvas.name, canvas.revision, encode(&canvas.objects)?, canvas.editor_state.as_ref().map(encode).transpose()?, canvas.updated_at, canvas.id])?;
+    touch(connection, &canvas.workspace_id)
+}
+
 fn relation_row(row: &Row<'_>) -> rusqlite::Result<Relation> {
     let claim: Option<String> = row.get(8)?;
     let source: Option<String> = row.get(10)?;
@@ -215,7 +226,9 @@ pub fn insert_context(connection: &Connection, context: &Context) -> Result<()> 
 
 pub fn run_row(row: &Row<'_>) -> rusqlite::Result<Run> {
     let usage: Option<String> = row.get(7)?;
-    Ok(Run { id: row.get(0)?, workspace_id: row.get(1)?, context_id: row.get(2)?, model: row.get(3)?, status: enumeration(row.get(4)?)?, answer: row.get(5)?, model_used: row.get(6)?, usage: usage.map(parse).transpose()?, error: row.get(8)?, document_id: row.get(9)?, proposal_id: row.get(10)?, created_at: row.get(11)?, updated_at: row.get(12)?, canvas_proposal_id: row.get(13)? })
+    let origin: Option<String> = row.get(14)?;
+    let placement: Option<String> = row.get(15)?;
+    Ok(Run { id: row.get(0)?, workspace_id: row.get(1)?, context_id: row.get(2)?, model: row.get(3)?, status: enumeration(row.get(4)?)?, answer: row.get(5)?, model_used: row.get(6)?, usage: usage.map(parse).transpose()?, error: row.get(8)?, document_id: row.get(9)?, proposal_id: row.get(10)?, created_at: row.get(11)?, updated_at: row.get(12)?, canvas_proposal_id: row.get(13)?, origin: origin.map(parse).transpose()?, placement: placement.map(parse).transpose()? })
 }
 
 pub fn run(connection: &Connection, id: &str) -> Result<Run> {
@@ -223,12 +236,12 @@ pub fn run(connection: &Connection, id: &str) -> Result<Run> {
 }
 
 pub fn insert_run(connection: &Connection, run: &Run) -> Result<()> {
-    connection.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", params![run.id, run.workspace_id, run.context_id, run.model, enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.created_at, run.updated_at, run.canvas_proposal_id])?;
+    connection.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", params![run.id, run.workspace_id, run.context_id, run.model, enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.created_at, run.updated_at, run.canvas_proposal_id, run.origin.as_ref().map(encode).transpose()?, run.placement.as_ref().map(encode).transpose()?])?;
     Ok(())
 }
 
 pub fn update_run(connection: &Connection, run: &Run) -> Result<()> {
-    connection.execute("UPDATE runs SET status=?,answer=?,model_used=?,usage=?,error=?,document_id=?,proposal_id=?,updated_at=?,canvas_proposal_id=? WHERE id=?", params![enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.updated_at, run.canvas_proposal_id, run.id])?;
+    connection.execute("UPDATE runs SET status=?,answer=?,model_used=?,usage=?,error=?,document_id=?,proposal_id=?,updated_at=?,canvas_proposal_id=?,placement=? WHERE id=?", params![enum_name(&run.status)?, run.answer, run.model_used, run.usage.as_ref().map(encode).transpose()?, run.error, run.document_id, run.proposal_id, run.updated_at, run.canvas_proposal_id, run.placement.as_ref().map(encode).transpose()?, run.id])?;
     Ok(())
 }
 
@@ -252,14 +265,14 @@ pub fn update_proposal(connection: &Connection, proposal: &Proposal) -> Result<(
 
 pub fn insert_asset(connection: &Connection, asset: &Asset) -> Result<()> {
     let bytes = STANDARD.decode(&asset.data_base64).map_err(|_| ApiError::invalid("资产的 Base64 数据无效"))?;
-    connection.execute("INSERT INTO assets VALUES (?,?,?,?,?,?)", params![asset.id, asset.workspace_id, asset.filename, asset.media_type, bytes, asset.created_at])?;
+    connection.execute("INSERT INTO assets VALUES (?,?,?,?,?,?,?)", params![asset.id, asset.workspace_id, asset.filename, asset.media_type, bytes, asset.created_at, asset.temporary])?;
     Ok(())
 }
 
 pub fn asset(connection: &Connection, id: &str) -> Result<Asset> {
     Ok(connection.query_row("SELECT * FROM assets WHERE id=?", [id], |row| {
         let bytes: Vec<u8> = row.get(4)?;
-        Ok(Asset { id: row.get(0)?, workspace_id: row.get(1)?, filename: row.get(2)?, media_type: row.get(3)?, data_base64: STANDARD.encode(bytes), created_at: row.get(5)? })
+        Ok(Asset { id: row.get(0)?, workspace_id: row.get(1)?, filename: row.get(2)?, media_type: row.get(3)?, data_base64: STANDARD.encode(bytes), created_at: row.get(5)?, temporary: row.get(6)? })
     })?)
 }
 

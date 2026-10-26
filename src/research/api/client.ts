@@ -1,7 +1,7 @@
 import type {
   Anchor, AnchorResolution, ApiErrorBody, Canvas, CanvasAction, CanvasProposal, CanvasProposalResult, Capabilities, ReviewRequest, SceneContextRequest, CanvasObject, ContextRequest, Content, DocumentKind,
   DocumentMetadata, DocumentVersion, Health, ImportResult, ModelCatalog, Proposal, ProposalResult, Relation,
-  RelationInput, ResearchContext, ResearchDocument, Run, RunProgress, SearchHit, Workspace, WorkspaceSummary,
+  RelationInput, ResearchContext, ResearchDocument, Run, RunProgress, RunPlacementResult, Bounds, VisualAsset, SearchHit, Workspace, WorkspaceSummary,
 } from './types';
 import { TERMINAL_RUN_STATUSES } from './types';
 
@@ -124,6 +124,8 @@ export const api = {
   listRuns: (workspaceId: string) => request<Run[]>(`/workspaces/${enc(workspaceId)}/runs`),
   getRun: (id: string) => request<Run>(`/runs/${enc(id)}`),
   cancelRun: (id: string) => request<Run>(`/runs/${enc(id)}/cancel`, { method: 'POST' }),
+  placeRun: (id: string, input: { expected_canvas_revision: number; bounds?: Bounds }) =>
+    request<RunPlacementResult>(`/runs/${enc(id)}/place`, { method: 'POST', json: input }),
   /** 从失败画布运行的原输出恢复提案；JSON 内容无效时返回具体错误 */
   recoverCanvasProposal: (id: string) => request<Run>(`/runs/${enc(id)}/recover-canvas-proposal`, { method: 'POST' }),
 
@@ -138,6 +140,13 @@ export const api = {
     return request<ImportResult>(`/workspaces/${enc(workspaceId)}/imports`, { method: 'POST', body: form });
   },
   assetUrl: (id: string) => `${BASE}/assets/${enc(id)}`,
+  uploadVisual: (workspaceId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return request<VisualAsset>(`/workspaces/${enc(workspaceId)}/visual-assets`, { method: 'POST', body: form });
+  },
+  listVisualAssets: (workspaceId: string) => request<VisualAsset[]>(`/workspaces/${enc(workspaceId)}/visual-assets`),
+  discardVisual: (workspaceId: string, id: string) => request<void>(`/workspaces/${enc(workspaceId)}/visual-assets/${enc(id)}`, { method: 'DELETE' }),
   fetchAsset: async (id: string) => {
     const response = await fetch(`${BASE}/assets/${enc(id)}`);
     if (!response.ok) throw new ApiError(response.status, 'asset', `资产读取失败：HTTP ${response.status}`);
