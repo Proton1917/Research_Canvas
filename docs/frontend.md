@@ -41,7 +41,12 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **文稿保存**：每次保存同时提交文本块投影、Markdown 与 `editor_state`（`blocksuite-yjs-v1`，Y.Doc 更新的 Base64）。编辑后约 1.2 秒自动保存，页面隐藏时立即保存。版本冲突（409）时保留本地内容，用户可选择保留本地或载入服务器版本。
 - **文本块投影**：块标识沿用编辑器块标识。标题、引用、列表、代码、公式块写成 Markdown 前缀，行内公式写成 `$…$`，表格写成 GFM 表格。投影可逆：服务端改写清除 `editor_state` 后，前端按文本块重建结构。投影规则新增块类型后，已保存文稿首次打开时自动补存一次文本块，编辑状态保持不变。
 - **锚点**：选段按块内投影文本的 UTF-16 偏移记录，并附带文稿版本。原文修订后由后端返回原位、已重定位、原文已改、定位失效或多处匹配。
-- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿和项目文件（`metadata.project_id`）首次打开时只做显示转换（Markdown 或段落拆分），不立即写回；首次编辑、创建批注或发起上下文时再保存。因此未改动的候选文稿可整组撤销，项目文件保持导入版本，再次导入时按导入版本判断是否已有编辑。`flushAll`（页面隐藏或刷新、切换工作区、导出）跳过这类仅有显示转换的文稿，服务端版本保持不变。
+- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿、项目文件（`metadata.project_id`）和普通导入文稿（`metadata.source_asset_id`）首次打开时只做显示转换（Markdown 或段落拆分），记为 `deferred`，不自动保存。因此未改动的候选文稿可整组撤销，导入文件在打开、切换视图和刷新后保持导入版本。`flushAll`（页面隐藏或刷新、切换工作区、导出）跳过这类文稿。
+- **保存类型**：`snapshotContent` 在第一次等待前同步确定序号、保存类型、标题和正文，`saveDocument` 按该快照提交 `change_kind`。
+  - `editor_initialization`：只有显示转换的 `deferred` 文稿在创建锚点或冻结上下文（`flushDocument`）时持久化内容块，只提交 `content`，不提交标题与元信息；后端记为 `editor-initialize`，项目重导入不把它视为编辑。
+  - `edit`：任何实际编辑（正文、标题、公式、结构）经 `_markDocDirty` 清除 `deferred`，之后的保存都是 `edit`；冲突处理中的“保留本地内容”覆盖服务端版本时也按 `edit` 提交。
+  - `deferred` 在保存成功后清除，保存失败时保留，重试仍为初始化；初始化保存进行中出现编辑时，该请求按原快照完成，新编辑按 `seq`/`savedSeq` 以 `edit` 补存。
+  - 采用服务端尚无 `editor_state` 的导入或提案正文时（再次导入更新、冲突时载入服务器版本、恢复导入版本），`_rebuildInitialDisplay` 在原 store 中重建显示转换并重新记为 `deferred`。已有 `editor_state` 的投影升级沿用原保存约定。
 - **首次打开的 Markdown 来源**：`markdownSource` 对带 `markdown` 字段的 document、单块 discussion 及带 `metadata.canvas_proposal_id` 的单块 note 取 Markdown 原文，经 `MarkdownTransformer.importMarkdownToBlock` 建立标题、列表、加粗、表格、代码与公式。已有 `editor_state` 或历史编辑状态的文稿按保存内容载入，不再转换。画布卡片与精读视图共用同一文稿 store，显示一致。转换时的三处处理：
   - 代码块挂载时会把语言名规范为高亮器标识（`bash` 改为标识、未识别的语言置空），这会修改文稿。转换后先按同一规则（`bundledLanguagesInfo`）写入语言，挂载不再产生编辑。
   - 表格单元格中的 `<br>` 转为单元格内换行（Excel 单元格的保存值与公式分两行显示），文本块投影按 `<br>` 写回 GFM 表格。
@@ -49,9 +54,10 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **项目目录与文件导入**：接口约定见 [project-import.md](project-import.md)。
   - 载入与刷新工作区使用 `api.getWorkspace(id, {projectDocuments: false})` 和 `api.listProjects`；刷新时保留已按需载入的项目文稿。侧栏“项目”按目录展开，每次展开调用 `api.projectEntries` 读取一页（`project_page_size`），`next_cursor` 存在时显示“加载更多”。项目文件不进入按类别的文稿列表。
   - 打开、放入画布（菜单或拖入）和选为讨论材料时，`loadDocument` 按 document_id 读取完整文稿并加入工作区摘要；检索结果等其他入口打开未载入的文稿时，精读视图同样先读取。文稿标题为“项目名/相对路径”，来源栏另列项目与路径。
-  - 导入入口：普通“导入文件”多选任意格式（JSON 按研究材料导入，结果提示正文读取状态）；“导入项目文件夹”打开预览；“从 JSON 归档恢复工作区”保持单独入口。文件夹来自目录选择器（`showDirectoryPicker`，包含空目录）、`webkitdirectory` 上传对话框（浏览器不报告空目录）或拖入侧栏/预览区（`webkitGetAsEntry`，每个顶层文件夹一个项目，单个文件按普通导入）。
-  - 预览：每个文件夹显示目标（新建项目或同名的既有项目）、项目名、文件数、字节数、目录与空目录、文件清单和超出 `max_request_bytes` 的文件。缓存、构建目录与系统文件（`.git`、`node_modules`、`dist`、`target`、`.DS_Store` 等）默认跳过，按名称列出数量与字节数，可勾选纳入。
-  - 上传：先 `api.createProject`，再按约 16 MiB、至多 24 个文件分批串行调用 `api.importProjectFiles`；目录清单随该项目第一批提交。进度、各状态计数与逐项结果来自批次响应（新导入、已更新、内容相同 · 复用、版本冲突、未保存），读取状态与说明按 `entry.text_status`/`message` 显示。取消停止后续批次，未提交的文件可“继续导入”；请求失败时已提交批次保留。关闭对话框后上传继续，仍有冲突或未保存文件的结果可从侧栏再次打开。
+  - 导入入口：普通“导入文件”多选任意格式（JSON 按研究材料导入，结果提示正文读取状态）；“导入项目文件夹”打开预览；“从 JSON 归档恢复工作区”保持单独入口。文件夹来自目录选择器（`showDirectoryPicker`，包含空目录）、`webkitdirectory` 上传对话框（浏览器不报告空目录）或拖入侧栏/预览区（`webkitGetAsEntry`，每个顶层文件夹一个项目，单个文件按普通导入）。导入进行中或上次结果仍有冲突、未保存文件时，新拖入的文件夹不替换原任务，界面提示先处理。
+  - 预览：每个文件夹显示目标（新建项目或同名的既有项目）、项目名、文件数、字节数、目录与空目录、文件清单和超出单个文件额度的文件。缓存、构建目录与系统文件（`.git`、`node_modules`、`dist`、`target`、`.DS_Store` 等）默认跳过，按名称列出数量与字节数，可勾选纳入。
+  - 大小额度：预览列出单次请求上限 `max_request_bytes`、为 multipart 清单与分隔预留的空间（上限的 1/16，介于 32 KiB 与 256 KiB）和单个文件最大值（两者之差）。超出单个文件额度的文件在预览中按同一数值标出、不上传；每批文件合计不超过 16 MiB 与该额度中较小者。服务返回 413 `upload_too_large` 时，普通导入提示服务说明并继续同批其他文件，项目批次标为未保存并保留已提交结果。
+  - 上传：先 `api.createProject`，再按上述额度、至多 24 个文件分批串行调用 `api.importProjectFiles`；目录清单随该项目第一批提交，清单大于预留空间一半时单独先提交。进度、各状态计数与逐项结果来自批次响应（新导入、已更新、内容相同 · 复用、版本冲突、未保存），读取状态与说明按 `entry.text_status`/`message` 显示。取消停止后续批次，未提交的文件可“继续导入”；请求失败时已提交批次保留。关闭对话框后上传继续，仍有冲突或未保存文件的结果可从侧栏再次打开。
   - 冲突：列出工作区当前版本与“查看当前文稿”；勾选“以导入原件覆盖版本 N”后携带 `expected_version` 重传。导入完成后刷新项目列表和已读取的目录。已载入的更新文件由 `adoptImportedDocument` 在原 store 中按新正文重建，继续保持导入版本；有未保存编辑时保留本地内容并进入版本冲突。
   - 来源栏（`FileInfo`）：项目与相对路径、格式、大小、读取状态及说明、导入版本、原件下载；Excel 列出工作表（范围、公式数），PowerPoint 列出页次与标题，点击定位到正文标题。PDF 原页沿用“原始 PDF”。
 - **画布**：卡片是 `affine:embed-synced-doc`，引用统一文稿；同一文稿可出现在多张画布。画布标题栏下方是固定高度的选择操作行（提问、展开编辑、研究联系等），选择变化时画布位置保持不变。`editor_state` 使用 `view_version: 2`：
@@ -124,6 +130,30 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 
 ## 验证记录
 
+### 2026-10-28 编辑器初始化保存、上传额度与 Finder 拖放
+
+在 8802（常规上限，`project_page_size = 5`）和 8803（`max_request_bytes = 524288`）两个空数据库实例上验证，后端为含 `change_kind` 与 413 的当前构建，配置在 `tmp/import-init/server-*.toml`。i1–i3 由 Playwright 驱动无头 Chrome；页面内记录每次 `PATCH /documents/{id}` 的 `change_kind`、是否提交标题与响应，并按需注入延迟或网络失败。i4 使用 macOS 真实拖放：可见 Chrome 打开导入预览，Finder 窗口显示磁盘目录 `tmp/import-init/fixture`，`drag.swift` 以系统鼠标事件从 Finder 图标拖到预览区，按下前及松开前都核对两处窗口分别属于 Finder 与这一 Chrome 进程。脚本、结果 JSON 和截图在 `tmp/import-init/`（`i1_project.py`…`i4_finder.py`、`i*.json`、`shots/`）。各阶段页面错误为 0；i3 的一条控制台记录是 Chrome 对预期 413 响应的资源加载日志。
+
+已验证：
+- **项目文件初始化与重导入**（i1）：
+  - PPTX 打开后为 v1；在第 1 页备注三击选段并“讨论选段”，请求为 `editor_initialization`（不含标题），文稿到 v2（`editor-initialize`）。
+  - XLSX 作为讨论材料，预览时首次保存被注入网络失败：面板显示错误，文稿仍为 v1；再次预览仍以 `editor_initialization` 提交，到 v2。冻结上下文为工作簿 v2 与片段 v2，范围检查一致 2 项。
+  - `project.note` 打开后直接键入，保存为 `edit`（v2）。`project-import.md` 的保存被延迟 3 秒，期间继续键入：两次 `edit` 请求（expected_version 1、2），v3 含两段输入。
+  - 改写源 PPTX 备注中的一处文字、在源 `project.note` 末尾追加一段后重新导入：13 个复用，PPTX 已更新为 v3（`project-import`），`project.note` 冲突。PPTX 视图不刷新即显示新文字、版本 3，刷新后仍为 v3。原上下文仍为两项 v2，片段原文不变；锚点在 v3 中解析为 missing，原文可从 v2 读取。
+- **普通导入**（i2、i2b）：Notebook、Markdown、PPTX、DOCX 经“导入文件”导入（版本 reason 为 `import`）并放入画布；逐一打开精读、回到画布、刷新后再打开，四篇均为 v1，期间没有保存请求。Notebook 键入后保存为 `edit`（v2）；刷新后含新文字，表格 1、代码块 3、段落 19 与编辑前一致。普通 PPTX 记为批注时按 `editor_initialization` 保存为 v2，刷新后保持。DOCX 正文为未转换的单个文本块，批注直接建立在 v1 上，没有保存请求。
+- **上传额度与 413**（i3，8803）：预览显示“单次请求上限 512 KB（524,288 字节），其中 32.0 KB 预留给 multipart 清单与分隔；单个文件最大 480 KB（491,520 字节）”；656,896 字节的 PPT 以“超过单个文件可用的 491,520 字节”标出，其余 14 个文件计入预览。普通导入同时选择该 PPT 与 `project.json`：PPT 返回 413，提示“上传请求超过服务配置上限，请缩小当前批次或调整 max_request_bytes”，JSON 照常导入（201）。
+- **Finder 拖放目录**（i4）：真实拖放到达页面（`dragenter`/`dragover`/`drop`，类型为 `Files`）。预览为 15 个文件、793,197 字节、11 个目录，`archive/2026/old` 与 `empty` 为空目录，`node_modules` 默认跳过。导入 15 个新文件；服务端逐页遍历的路径与字节数与磁盘目录一致，目录记录含两个空目录。
+
+实测发现并已修复：第一次 Finder 拖放时页面收到了 `drop`，预览却为空。拖放处理在加入文件夹后又调用了打开对话框，后者在预览阶段重置任务，丢弃了刚加入的文件夹。现在由加入文件夹的操作直接打开对话框；导入进行中或仍有未处理结果时，新拖入的文件夹保留原任务并提示。
+
+#### 系统目录选择器与待保存编辑（后端补验，复用）
+
+在 8801 独立实例、当时的前端构建上，通过电脑操作工具驱动 Chrome 访客窗口，打开 macOS 系统目录选择器，实际选择 `tmp/project-import-ui/fixture/research-inputs` 并授权读取。预览包含 11 个目录、2 个空目录；服务端记录保留 `archive/2026/old`。实例 `max_request_bytes` 设置为 524288，已有的 656896 字节 PPT 显示超限，其他 14 个文件处理完成，13 个新导入、1 个复用。截图见 `.runtime/import-followup/native-directory-result.png`。
+
+待保存编辑采用独立服务暂停期间的实际保存失败。先保留更新源文件的导入冲突记录，在笔记正文输入 `local research notes`，保存失败后打开该导入记录；恢复服务，再确认以原件覆盖服务端 v2。原件写入 v3，浏览器保留本地文字并显示版本冲突。“保留本地内容”生成 v4，HTTP 读回含该文字，项目导入版本为 v3。截图见 `.runtime/import-followup/pending-edit-conflict.png`。
+
+后端 HTTP 验收覆盖初始化后源文件更新、历史片段引用、实际编辑冲突及普通导入初始化，结果见 `.runtime/import-followup/versions.json` 与 `upload-limit.json`。系统目录选择器、待保存编辑冲突与以上后端记录在本轮复用。
+
 ### 2026-10-28 项目目录与多格式文件导入
 
 在 `127.0.0.1:8800` 独立验收实例上验证（`tmp/project-import-ui/server.toml`，空数据库，`project_page_size = 5`，后端为 `3855e18` 的构建，模型 `cc/gemini-3.8-flash-high`）。Playwright 驱动 Chrome 执行真实点击、拖动与键入。目录选择器由 OPFS 中按原目录树写入的 `FileSystemDirectoryHandle` 代替系统对话框（遍历代码与真实选择相同），上传对话框路径使用 Playwright 的 `webkitdirectory` 目录上传。测试目录 `research-inputs` 由 `.runtime/project-import/inputs/` 的资料、`config/prompts` 与 `docs/project-import.md` 组成，含嵌套目录、两个空目录和 `node_modules`；另两个项目直接选择仓库的 `docs` 和 `config/prompts`。最终构建上从空数据库完整重跑 s1–s7，各阶段控制台错误均为 0。脚本、结果 JSON 和截图在 `tmp/project-import-ui/`（`s1_folder.py`…`s7b_toast.py`、`s*.json`、`shots/`），流程图新增“项目导入”分组。
@@ -156,10 +186,10 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 运行记录：s5 的第一次模型运行因 Router 返回 HTTP 502 失败（`s5-first-attempt-502.json`），直接请求 Router 正常后重跑成功；最终完整重跑的运行一次成功。
 
 未实测与缺项：
-- 拖放文件夹：需要系统拖放产生的目录条目，自动化浏览器无法构造；代码与目录选择器共用预览与上传。
-- 导入时已打开的文稿有未保存编辑：代码保留本地内容并进入版本冲突，本轮未构造。
-- 单个文件超过 `max_request_bytes` 的提示：验收资料最大 1.5 MB，未触发。
-- 普通“导入文件”形成的非项目文稿仍按原有规则在首次打开时写回显示转换。
+- 拖放文件夹：需要系统拖放产生的目录条目，自动化浏览器无法构造（已于同日以 Finder 实际拖放验证，见上）。
+- 导入时已打开的文稿有未保存编辑：代码保留本地内容并进入版本冲突，本轮未构造（后端补验已覆盖，见上）。
+- 单个文件超过 `max_request_bytes` 的提示：验收资料最大 1.5 MB，未触发（已于同日在 8803 验证，见上）。
+- 普通“导入文件”形成的非项目文稿仍按原有规则在首次打开时写回显示转换（现已统一延迟保存，见上）。
 
 ### 2026-10-26 画布提案便笺的 Markdown 显示
 

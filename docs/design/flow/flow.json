@@ -855,6 +855,72 @@
       "evidence": "observed",
       "state": "“导入文件”多选 JSON、Excel 与附件，各自成为工作区文稿并按读取状态提示；“从 JSON 归档恢复工作区”保持单独入口",
       "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "init_freeze",
+      "title": "冻结材料时的初始化保存",
+      "image": "screenshots/init_freeze-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "PPTX 选段与 XLSX 材料只有显示转换：建锚点和预览上下文时以 editor_initialization 保存（不提交标题），文稿 v1→v2，版本记为 editor-initialize；冻结上下文为两项 v2",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。XLSX 的首次初始化保存被注入网络失败，面板显示错误、文稿保持 v1，再次预览仍按初始化保存。"
+    },
+    {
+      "id": "init_reimport",
+      "title": "初始化后的源文件更新",
+      "image": "screenshots/init_reimport-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "源 PPTX 备注变化后重新导入：仅有初始化保存的文稿直接更新为 v3，已打开的视图原位显示新文字；实际编辑过的 project.note 列为冲突；原上下文仍引用片段 v2",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。"
+    },
+    {
+      "id": "normal_import_deferred",
+      "title": "普通导入保持导入版本",
+      "image": "screenshots/normal_import_deferred-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "Notebook、Markdown、PPTX、DOCX 普通导入后放入画布、打开精读、切换视图与刷新均为 v1；Notebook 实际编辑保存为 edit（v2），刷新后文字与表格、代码结构一致",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。"
+    },
+    {
+      "id": "upload_limits",
+      "title": "请求上限与单文件额度",
+      "image": "screenshots/upload_limits-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "预览列出单次请求上限 512 KB、为 multipart 清单与分隔预留的 32 KB 和单个文件最大 480 KB（491,520 字节）；超限的 PPT 按同一数值标出，不上传",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。"
+    },
+    {
+      "id": "upload_413",
+      "title": "普通导入超限提示",
+      "image": "screenshots/upload_413-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "同时导入超限 PPT 与 JSON：PPT 显示服务返回的 upload_too_large 说明，JSON 照常导入",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。"
+    },
+    {
+      "id": "finder_drop",
+      "title": "Finder 拖放目录",
+      "image": "screenshots/finder_drop-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "从 Finder 把 research-inputs 拖到导入区：页面收到 Files 拖放，预览含 11 个目录与 2 个空目录，node_modules 默认跳过；导入 15 个文件，服务端路径与字节数和磁盘一致",
+      "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。首次拖放发现预览被重置的缺陷，修复后复测。"
     }
   ],
   "edges": [
@@ -1415,6 +1481,49 @@
       "to": "files_import",
       "action": "导入文件（多选）",
       "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "init_freeze",
+      "action": "选段讨论 + 作为讨论材料，预览上下文",
+      "evidence": "observed"
+    },
+    {
+      "from": "init_freeze",
+      "to": "init_reimport",
+      "action": "源文件变化后再次导入",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "normal_import_deferred",
+      "action": "导入文件 → 打开、切换视图、刷新、编辑",
+      "evidence": "observed"
+    },
+    {
+      "from": "folder_preview",
+      "to": "upload_limits",
+      "action": "请求上限较小的实例",
+      "evidence": "observed"
+    },
+    {
+      "from": "files_import",
+      "to": "upload_413",
+      "action": "选择超出请求上限的文件",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "finder_drop",
+      "action": "从 Finder 拖入文件夹",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "finder_drop",
+      "to": "project_tree",
+      "action": "开始导入，展开项目目录",
+      "evidence": "observed"
     }
   ],
   "pending": [
@@ -1429,14 +1538,6 @@
     {
       "title": "从原输出恢复成功",
       "reason": "验证库中剩余的失败运行均为内容错误，恢复接口正确拒绝；没有可恢复的围栏输出样本，恢复成功后打开提案的路径未实际触发。"
-    },
-    {
-      "title": "拖放文件夹导入",
-      "reason": "拖放目录依赖系统拖放与 webkitGetAsEntry，自动化浏览器无法构造真实目录条目；代码路径与目录选择器共用预览，未做真机拖放。"
-    },
-    {
-      "title": "导入时已打开文稿有未保存编辑",
-      "reason": "会话保留本地编辑并进入版本冲突；本轮实测的是已保存编辑造成的服务端冲突，未单独构造保存前的并发导入。"
     }
   ],
   "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。 交接任务节点（link_views、relate_candidate、bridge_details、ask_*、canvas_stale、canvas_conflict、proposal_materialized、proposal_reverted）来自 2026-10-25 对后端 6bc427f 的实测。 异步协作与图像管理节点（run_pending、run_placed、ask_expired、card_click、visual_library、image_document、ask_vision_error、ask_image_budget、proposal_rebase、proposal_dependent、merge_history）来自 2026-10-26 对后端 f49d8ad 的实测。"
