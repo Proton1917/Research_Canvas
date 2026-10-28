@@ -172,9 +172,12 @@ export function openImportDialog() {
  */
 export function closeImportDialog() {
   const job = importJob.get();
-  const unresolved = job.items.some(item => ['conflict', 'failed', 'cancelled'].includes(item.state));
-  if (job.phase === 'running' || (job.phase !== 'preview' && unresolved)) importJob.set({ open: false });
+  if (job.phase === 'running' || (job.phase !== 'preview' && hasUnresolved(job))) importJob.set({ open: false });
   else importJob.set({ ...emptyJob });
+}
+
+function hasUnresolved(job: ImportJob) {
+  return job.items.some(item => ['conflict', 'failed', 'cancelled'].includes(item.state));
 }
 
 /** 放弃上次结果，开始新的选择。 */
@@ -186,7 +189,14 @@ export function newImport() {
 export function addFolders(folders: Folder[]) {
   const projects = app.get().projects;
   const job = importJob.get();
+  if (job.phase === 'running' || (job.phase !== 'preview' && hasUnresolved(job))) {
+    // 进行中或仍有冲突、未保存文件的导入保留原结果，处理后再加入新的文件夹
+    importJob.set({ open: true });
+    toast(job.phase === 'running' ? '当前导入仍在进行，完成后再加入新的文件夹。' : '上次导入还有冲突或未保存的文件，处理后选择“新的导入”再加入文件夹。', 'info');
+    return;
+  }
   if (job.phase !== 'preview') importJob.set({ ...emptyJob, open: true });
+  void loadImportCapabilities().catch(error => toast(`读取导入能力失败：${errorText(error)}`, 'error'));
   const roots = folders.map(folder => {
     folder.files.sort((a, b) => a.path.localeCompare(b.path));
     const existing = projects.find(item => item.project.name === folder.name);
@@ -218,13 +228,26 @@ export type RootPreview = {
   skipped: Map<string, { files: number; bytes: number }>;
 };
 
-/** 请求体中为 multipart 清单与分隔留出的空间 */
-const REQUEST_MARGIN = 256 * 1024;
 const BATCH_BYTES = 16 * 1024 * 1024;
 const BATCH_FILES = 24;
 
+/**
+ * 单次请求中为 multipart 清单、字段头与分隔预留的字节数：请求上限的 1/16，介于 32 KiB 与 256 KiB。
+ * 一批至多 24 个文件的字段头与清单项在此范围内；目录清单较大时单独提交。
+ */
+export function requestReserve(capabilities: ImportCapabilities | null) {
+  if (!capabilities) return 0;
+  return Math.min(256 * 1024, Math.max(32 * 1024, Math.floor(capabilities.max_request_bytes / 16)));
+}
+
+/** 单个文件可用的大小：请求上限扣除 multipart 预留空间。预览筛选与分批使用同一数值。 */
 export function fileLimit(capabilities: ImportCapabilities | null) {
-  return capabilities ? capabilities.max_request_bytes - REQUEST_MARGIN : Infinity;
+  return capabilities ? capabilities.max_request_bytes - requestReserve(capabilities) : Infinity;
+}
+
+/** 超出单文件可用大小的说明，列出请求上限与预留空间 */
+export function oversizeMessage(bytes: number, capabilities: ImportCapabilities) {
+  return `文件 ${bytes.toLocaleString()} 字节，超过单个文件可用的 ${fileLimit(capabilities).toLocaleString()} 字节（请求上限 ${capabilities.max_request_bytes.toLocaleString()} 字节，其中 ${requestReserve(capabilities).toLocaleString()} 字节预留给 multipart 清单与分隔）；可调整服务配置 max_request_bytes 或跳过该文件`;
 }
 
 export function previewRoot(root: ImportRoot, include: string[], capabilities: ImportCapabilities | null): RootPreview {
@@ -297,7 +320,7 @@ export async function startImport() {
     ...preview.files.map(item => ({ rootId: preview.root.id, path: item.path, file: item.file, state: 'pending' as const })),
     ...preview.oversize.map(item => ({
       rootId: preview.root.id, path: item.path, file: item.file, state: 'oversize' as const,
-      error: { code: 'too_large', message: `文件 ${item.file.size.toLocaleString()} 字节，超过单次请求上限 ${capabilities.max_request_bytes.toLocaleString()} 字节；可调整服务配置 max_request_bytes 或跳过该文件` },
+      error: { code: 'too_large', message: oversizeMessage(item.file.size, capabilities) },
     })),
   ]);
   importJob.set({ items, phase: 'running', cancel: false, stop: null, projects: {}, directoriesSent: [], overwrite: [] });
@@ -322,7 +345,13 @@ async function runImport(plan?: Array<{ rootId: string; directories: string[] }>
     const capabilities = await loadImportCapabilities();
     const roots = importJob.get().roots;
     const queue = roots.map(root => ({ root, items: importJob.get().items.filter(item => item.rootId === root.id && item.state === 'pending') }));
-    const planned = queue.map(({ root, items }) => ({ root, groups: batches(items, capabilities) }));
+    const planned = queue.map(({ root, items }) => {
+      const groups = batches(items, capabilities);
+      // 目录清单超过预留空间的一半时先单独提交，文件批次保持预留空间
+      const directories = directoryPlan.find(item => item.rootId === root.id)?.directories ?? [];
+      const large = !importJob.get().directoriesSent.includes(root.id) && new TextEncoder().encode(JSON.stringify(directories)).length > requestReserve(capabilities) / 2;
+      return { root, groups: large && groups.length ? [[], ...groups] : groups };
+    });
     const total = planned.reduce((sum, { root, groups }) => {
       const needsDirectories = !importJob.get().directoriesSent.includes(root.id) && (directoryPlan.find(item => item.rootId === root.id)?.directories.length ?? 0) > 0;
       return sum + Math.max(groups.length, needsDirectories ? 1 : 0);

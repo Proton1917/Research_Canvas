@@ -49,9 +49,14 @@ type DocEntry = {
   /** 最近一次被服务端确认的快照对应的序号 */
   savedSeq: number;
   suppress: number;
-  /** 仅有首次打开的格式转换、尚未写回；首次编辑或 flushDocument 时一并保存 */
+  /**
+   * 编辑器中只有首次显示转换、此后没有实际编辑：不自动保存；创建锚点或冻结上下文需要版本时以
+   * editor_initialization 保存。实际编辑清除该标志（之后按 edit 保存），保存成功后清除，保存失败时保留。
+   */
   deferred?: boolean;
 };
+
+export type DocumentChangeKind = 'edit' | 'editor_initialization';
 
 type CanvasEntry = {
   id: string;
@@ -324,8 +329,8 @@ export class ResearchSession {
     entry.suppress = 0;
     this._docs.set(doc.id, entry);
     // AI 画布提案新建的文稿在用户编辑前保持服务端版本，整组撤销据此判断无后续修改；
-    // 项目文件同样保持导入版本，再次导入时按导入版本判断是否已有编辑
-    if (convertAfterLoad && !upgradeProjection && (doc.metadata.canvas_proposal_id || doc.metadata.project_id)) entry.deferred = true;
+    // 项目文件与普通导入文稿同样保持导入版本，再次导入时按导入版本判断是否已有编辑
+    if (convertAfterLoad && !upgradeProjection && initialDisplay(doc)) entry.deferred = true;
     else if (convertAfterLoad || upgradeProjection) this._markDocDirty(entry);
     this._emit();
     return entry;
@@ -376,13 +381,17 @@ export class ResearchSession {
     this._emit();
   }
 
-  /** 生成与当前编辑状态一致的内容：文本块、Markdown 与可恢复的编辑器状态。 */
-  async snapshotContent(id: string): Promise<{ seq: number; title: string; content: Content }> {
+  /**
+   * 生成与当前编辑状态一致的内容：文本块、Markdown 与可恢复的编辑器状态，以及保存类型。
+   * 只有首次显示转换时为 editor_initialization；edit 选项用于覆盖服务端版本等必须按内容编辑提交的保存。
+   */
+  async snapshotContent(id: string, options: { edit?: boolean } = {}): Promise<{ seq: number; kind: DocumentChangeKind; title: string; content: Content }> {
     const entry = this._docs.get(id);
     if (!entry) throw new Error('文稿尚未载入');
     const { store } = entry;
-    // 以下读取在第一个 await 之前同步完成：序号、文本块、标题、编辑器状态和 Markdown 来源快照属于同一次编辑状态。
+    // 以下读取在第一个 await 之前同步完成：序号、保存类型、文本块、标题、编辑器状态和 Markdown 来源快照属于同一次编辑状态。
     const seq = entry.seq;
+    const kind: DocumentChangeKind = entry.deferred && !options.edit ? 'editor_initialization' : 'edit';
     const blocks = projectStore(store, entry.pages);
     const title = storeTitle(store).trim() || entry.doc.title;
     const update = Y.encodeStateAsUpdate(this.workspace.getResearchDoc(id)!.spaceDoc);
@@ -405,7 +414,7 @@ export class ResearchSession {
     }
     const envelope: EditorStateEnvelope = { format: 'blocksuite-yjs-v1', update: toBase64(update) };
     if (Object.keys(assets).length) envelope.assets = assets;
-    return { seq, title, content: { blocks, markdown, editor_state: envelope } };
+    return { seq, kind, title, content: { blocks, markdown, editor_state: envelope } };
   }
 
   async saveDocument(id: string, options: { overwriteVersion?: number } = {}): Promise<void> {
@@ -426,11 +435,16 @@ export class ResearchSession {
     entry.saving = (async () => {
       let retry = false;
       try {
-        const { seq, title, content } = await this.snapshotContent(id);
+        const { seq, kind, title, content } = await this.snapshotContent(id, { edit: options.overwriteVersion !== undefined });
         const expected = options.overwriteVersion ?? entry.status.version;
-        const saved = await api.updateDocument(id, { expected_version: expected, title, content });
+        // 初始化保存保持服务端标题与元信息，只提交编辑器内容
+        const saved = await api.updateDocument(id, kind === 'edit'
+          ? { expected_version: expected, change_kind: kind, title, content }
+          : { expected_version: expected, change_kind: kind, content });
         entry.doc = saved;
         entry.savedSeq = Math.max(entry.savedSeq, seq);
+        // 服务端已有编辑器状态，之后的保存均为内容编辑
+        entry.deferred = false;
         this.workspace.meta.setDocMeta(id, { title: saved.title });
         retry = entry.seq > entry.savedSeq;
         entry.status = { state: retry ? 'dirty' : 'saved', version: saved.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
@@ -456,7 +470,8 @@ export class ResearchSession {
     const entry = this._docs.get(id);
     if (!entry) throw new Error('文稿尚未载入');
     if (entry.saving) await entry.saving;
-    if (entry.deferred) { entry.deferred = false; entry.seq++; }
+    // 仅有显示转换时也需要持久化内容块：推进序号发起保存，初始化身份随快照一并确定
+    if (entry.deferred && entry.seq === entry.savedSeq) entry.seq++;
     if (!entry.readonly && (entry.seq !== entry.savedSeq || entry.status.state === 'error')) await this.saveDocument(id);
     if (entry.status.state === 'conflict') throw new Error('文稿存在版本冲突，请先处理冲突');
     if (entry.status.state === 'error') throw new Error(entry.status.error ?? '文稿保存失败');
@@ -501,13 +516,17 @@ export class ResearchSession {
   /** 冲突处理：载入服务端当前版本，放弃本地未保存修改。 */
   async resolveConflictUseServer(id: string) {
     const current = await api.getDocument(id);
-    this.applyServerDocument(current);
+    await this.applyServerDocument(current);
   }
 
-  /** 后端生成新版本（提案确认、撤销、恢复历史版本）后，按其文本块更新已载入的编辑器。 */
-  applyServerDocument(doc: ResearchDocument) {
+  /**
+   * 后端生成新版本（提案确认、撤销、恢复历史版本、采用导入原件）后更新已载入的编辑器。
+   * 尚无编辑器状态的导入或提案正文重新建立首次显示状态，其余按文本块更新。
+   */
+  applyServerDocument(doc: ResearchDocument): Promise<void> {
     const entry = this._docs.get(doc.id);
-    if (!entry) return;
+    if (!entry) return Promise.resolve();
+    if (!entry.readonly && initialDisplay(doc) && !readEnvelope(doc.content.editor_state)) return this._rebuildInitialDisplay(entry, doc);
     clearTimeout(entry.timer);
     entry.doc = doc;
     entry.pages = new Map(doc.content.blocks.filter(block => block.page != null).map(block => [block.id, block.page!]));
@@ -525,8 +544,10 @@ export class ResearchSession {
     }
     this.workspace.meta.setDocMeta(doc.id, { title: doc.title });
     entry.savedSeq = entry.seq;
+    entry.deferred = false;
     entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
     this._emit();
+    return Promise.resolve();
   }
 
   /**
@@ -542,6 +563,12 @@ export class ResearchSession {
       this._emit();
       return false;
     }
+    await this._rebuildInitialDisplay(entry, doc);
+    return true;
+  }
+
+  /** 在原 store 中按服务端正文重建首次显示（画布卡片与精读视图保持挂载），显示转换后保持服务端版本。 */
+  private async _rebuildInitialDisplay(entry: DocEntry, doc: ResearchDocument) {
     clearTimeout(entry.timer);
     const { store } = entry;
     entry.suppress++;
@@ -573,16 +600,11 @@ export class ResearchSession {
     }
     entry.doc = doc;
     entry.pages = new Map(doc.content.blocks.filter(block => block.page != null).map(block => [block.id, block.page!]));
+    this.workspace.meta.setDocMeta(doc.id, { title: doc.title });
     entry.savedSeq = entry.seq;
     entry.deferred = converted;
     entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
     this._emit();
-    return true;
-  }
-
-  /** 仅有首次显示转换、尚未写回的文稿。 */
-  isDeferred(id: string) {
-    return !!this._docs.get(id)?.deferred;
   }
 
   /** 后端修改了标题或元数据但正文未改变时同步版本号。 */
@@ -1158,6 +1180,11 @@ function normalizeCodeLanguages(store: Store) {
     const next = info?.id ?? null;
     if (next !== language) store.updateBlock(model, { language: next } as never);
   }
+}
+
+/** 首次打开只做显示转换、在用户编辑前保持服务端版本的文稿：画布提案新建的文稿、项目文件与普通导入文稿。 */
+function initialDisplay(doc: ResearchDocument) {
+  return !!(doc.metadata.canvas_proposal_id || doc.metadata.project_id || doc.metadata.source_asset_id);
 }
 
 function markdownSource(doc: ResearchDocument): string | null {

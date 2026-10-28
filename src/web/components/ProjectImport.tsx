@@ -4,8 +4,8 @@ import { type DragEvent, useMemo, useRef, useState } from 'react';
 
 import { errorText, importFiles, toast, useApp } from '../app/model';
 import {
-  addFolders, cancelImport, closeImportDialog, conflictVersion, findEntry, type ImportItem, itemProject, type ItemState, newImport, openImportDialog,
-  overwriteConflicts, previewRoot, removeRoot, resumeImport, startImport, toggleInclude, toggleOverwrite, updateRoot, useImportJob, useTree,
+  addFolders, cancelImport, closeImportDialog, conflictVersion, fileLimit, findEntry, type ImportItem, itemProject, type ItemState, newImport,
+  overwriteConflicts, previewRoot, requestReserve, removeRoot, resumeImport, startImport, toggleInclude, toggleOverwrite, updateRoot, useImportJob, useTree,
 } from '../app/projects';
 import {
   entriesFromDrop, foldersFromEntries, foldersFromInput, hasDroppedFiles, pickFolder, supportsDirectoryPicker,
@@ -71,9 +71,8 @@ export async function dropFolders(event: DragEvent | globalThis.DragEvent) {
   if (files.length) void importFiles(files);
   if (!entries.length) return;
   try {
-    const folders = await foldersFromEntries(entries);
-    addFolders(folders);
-    openImportDialog();
+    // addFolders 打开对话框并保留本轮已选的文件夹
+    addFolders(await foldersFromEntries(entries));
   } catch (error) {
     toast(`读取拖入的文件夹失败：${errorText(error)}`, 'error');
   }
@@ -127,7 +126,7 @@ function Preview() {
             {preview.oversize.length > 0 && (
               <ul className="mt-2 space-y-0.5 rounded-lg bg-orange-500/10 px-2.5 py-1.5 text-xs text-[var(--rc-bad)]">
                 {preview.oversize.map(item => (
-                  <li key={item.path}>「{item.path}」{formatBytes(item.file.size)}，超过单次请求上限 {formatBytes(capabilities?.max_request_bytes ?? 0)}，不会上传；可调整服务配置 max_request_bytes 或缩小文件范围。</li>
+                  <li key={item.path}>「{item.path}」{formatBytes(item.file.size)}（{item.file.size.toLocaleString()} 字节），超过单个文件可用的 {fileLimit(capabilities).toLocaleString()} 字节，不会上传；可调整服务配置 max_request_bytes 或缩小文件范围。</li>
                 ))}
               </ul>
             )}
@@ -146,6 +145,11 @@ function Preview() {
           </section>
         );
       })}
+      {capabilities && (
+        <p className="px-1 text-[11px] text-ink-muted" data-testid="import-limits">
+          单次请求上限 {formatBytes(capabilities.max_request_bytes)}（{capabilities.max_request_bytes.toLocaleString()} 字节），其中 {formatBytes(requestReserve(capabilities))} 预留给 multipart 清单与分隔；单个文件最大 {formatBytes(fileLimit(capabilities))}（{fileLimit(capabilities).toLocaleString()} 字节）；每批文件合计不超过 {formatBytes(Math.min(16 * 1024 * 1024, fileLimit(capabilities)))}、至多 24 个文件。
+        </p>
+      )}
       {skipped.length > 0 && (
         <section className="rounded-xl border border-line px-3 py-2" data-testid="import-filters">
           <p className="text-xs font-medium text-ink">默认跳过的缓存、构建目录与系统文件</p>
