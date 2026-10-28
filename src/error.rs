@@ -65,4 +65,14 @@ impl From<std::io::Error> for ApiError {
     fn from(error: std::io::Error) -> Self { Self::internal(error) }
 }
 
+impl From<axum::extract::multipart::MultipartError> for ApiError {
+    fn from(error: axum::extract::multipart::MultipartError) -> Self {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            Self::new(StatusCode::PAYLOAD_TOO_LARGE, "upload_too_large", "上传请求超过服务配置上限，请缩小当前批次或调整 max_request_bytes")
+        } else {
+            Self::new(error.status(), "invalid_input", error.to_string())
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, ApiError>;

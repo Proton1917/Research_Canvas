@@ -79,7 +79,7 @@ export const api = {
   createDocument: (workspaceId: string, input: { title: string; kind?: DocumentKind; content: Content; metadata?: DocumentMetadata }) =>
     request<ResearchDocument>(`/workspaces/${enc(workspaceId)}/documents`, { method: 'POST', json: input }),
   getDocument: (id: string) => request<ResearchDocument>(`/documents/${enc(id)}`),
-  updateDocument: (id: string, input: { expected_version: number; title?: string; content?: Content; metadata?: DocumentMetadata }) =>
+  updateDocument: (id: string, input: { expected_version: number; change_kind?: 'edit' | 'editor_initialization'; title?: string; content?: Content; metadata?: DocumentMetadata }) =>
     request<ResearchDocument>(`/documents/${enc(id)}`, { method: 'PATCH', json: input }),
   listVersions: (id: string) => request<DocumentVersion[]>(`/documents/${enc(id)}/versions`),
   getVersion: (id: string, version: number) => request<DocumentVersion>(`/documents/${enc(id)}/versions/${version}`),

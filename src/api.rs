@@ -80,9 +80,18 @@ pub async fn get_document(State(state): State<AppState>, Path(id): Path<String>)
 #[derive(Deserialize)]
 pub struct DocumentUpdate {
     pub expected_version: i64,
+    #[serde(default)] pub change_kind: DocumentChange,
     pub title: Option<String>,
     pub content: Option<Content>,
     pub metadata: Option<Value>,
+}
+
+#[derive(Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentChange {
+    #[default]
+    Edit,
+    EditorInitialization,
 }
 
 pub async fn update_document(State(state): State<AppState>, Path(id): Path<String>, Json(input): Json<DocumentUpdate>) -> Result<Json<Document>> {
@@ -94,10 +103,24 @@ pub async fn update_document(State(state): State<AppState>, Path(id): Path<Strin
             && input.content.as_ref().is_none_or(|content| content == &document.content)
             && input.metadata.as_ref().is_none_or(|metadata| metadata == &document.metadata);
         if unchanged { return Ok(document); }
+        let reason = match input.change_kind {
+            DocumentChange::Edit => "edit",
+            DocumentChange::EditorInitialization => {
+                // 首次编辑器投影保留版本供锚点引用，项目导入按内容编辑判断冲突。
+                if document.content.editor_state.is_some()
+                    || input.content.as_ref().is_none_or(|content| content.editor_state.is_none())
+                    || input.title.as_ref().is_some_and(|title| title != &document.title)
+                    || input.metadata.as_ref().is_some_and(|metadata| metadata != &document.metadata)
+                {
+                    return Err(ApiError::invalid("编辑器初始化需要首次编辑状态，并保持标题与元信息一致"));
+                }
+                "editor-initialize"
+            }
+        };
         if let Some(title) = input.title { document.title = title; }
         if let Some(content) = input.content { document.content = content; }
         if let Some(metadata) = input.metadata { document.metadata = metadata; }
-        db::revise(&transaction, &mut document, input.expected_version, "edit")?;
+        db::revise(&transaction, &mut document, input.expected_version, reason)?;
         transaction.commit()?;
         Ok(document)
     }).await?))

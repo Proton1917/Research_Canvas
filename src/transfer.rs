@@ -11,11 +11,11 @@ use crate::{AppState, db, error::{ApiError, Result}, model::*, research};
 
 pub async fn read_upload(mut multipart: Multipart) -> Result<(String, String, axum::body::Bytes)> {
     let mut upload = None;
-    while let Some(field) = multipart.next_field().await.map_err(|error| ApiError::invalid(error.to_string()))? {
+    while let Some(field) = multipart.next_field().await? {
         if field.name() != Some("file") { continue; }
         let filename = field.file_name().unwrap_or("document.txt").to_string();
         let media_type = field.content_type().unwrap_or("application/octet-stream").to_string();
-        let data = field.bytes().await.map_err(|error| ApiError::invalid(error.to_string()))?;
+        let data = field.bytes().await?;
         if upload.is_some() { return Err(ApiError::invalid("每次导入一个文件")); }
         upload = Some((filename, media_type, data));
     }

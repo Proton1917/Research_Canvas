@@ -181,7 +181,13 @@ fn save_file(connection: &Connection, project: &Project, spec: &ImportFile, file
         if same { return Ok(json!({"path":spec.path,"status":"unchanged","entry":entry})); }
         let document = db::document(connection, entry.document_id.as_deref().unwrap())?;
         let expected = spec.expected_version.or(entry.imported_version).unwrap();
-        if document.current_version != expected { return Err(ApiError::conflict(document.current_version)); }
+        if document.current_version != expected {
+            let edited = spec.expected_version.is_some() || connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM document_versions WHERE document_id=? AND version>? AND reason<>'editor-initialize')",
+                params![document.id, expected], |row| row.get::<_, bool>(0),
+            )?;
+            if edited { return Err(ApiError::conflict(document.current_version)); }
+        }
         previous = Some(document);
     }
     let asset_id = id();
@@ -215,9 +221,9 @@ fn save_file(connection: &Connection, project: &Project, spec: &ImportFile, file
 }
 
 pub async fn import_files(State(state): State<AppState>, Path(project_id): Path<String>, mut multipart: Multipart) -> Result<Json<Value>> {
-    let field = multipart.next_field().await.map_err(|error| ApiError::invalid(error.to_string()))?.ok_or_else(|| ApiError::invalid("请先提供 manifest 字段"))?;
+    let field = multipart.next_field().await?.ok_or_else(|| ApiError::invalid("请先提供 manifest 字段"))?;
     if field.name() != Some("manifest") { return Err(ApiError::invalid("首个字段需要是 manifest")); }
-    let mut manifest: Manifest = serde_json::from_str(&field.text().await.map_err(|error| ApiError::invalid(error.to_string()))?).map_err(|error| ApiError::invalid(format!("导入清单：{error}")))?;
+    let mut manifest: Manifest = serde_json::from_str(&field.text().await?).map_err(|error| ApiError::invalid(format!("导入清单：{error}")))?;
     let mut paths = HashSet::new();
     let mut specs = HashMap::new();
     for mut spec in manifest.files {
@@ -226,11 +232,11 @@ pub async fn import_files(State(state): State<AppState>, Path(project_id): Path<
     }
     for path in &mut manifest.directories { *path = relative_path(path)?; }
     let mut uploads = Vec::new();
-    while let Some(field) = multipart.next_field().await.map_err(|error| ApiError::invalid(error.to_string()))? {
+    while let Some(field) = multipart.next_field().await? {
         let spec = specs.remove(field.name().unwrap_or("")).ok_or_else(|| ApiError::invalid("文件字段缺少对应清单项"))?;
         let filename = parts(&spec.path).1.to_owned();
         let media_type = field.content_type().unwrap_or("application/octet-stream").to_owned();
-        let data = field.bytes().await.map_err(|error| ApiError::invalid(error.to_string()))?.to_vec();
+        let data = field.bytes().await?.to_vec();
         uploads.push((spec, filename, media_type, data));
     }
     if !specs.is_empty() { return Err(ApiError::invalid("清单中的文件字段缺失，请重新上传该批文件")); }

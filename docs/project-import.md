@@ -86,7 +86,11 @@ type ProjectEntry = {
 - `unchanged`：原件字节相同，复用原有文稿和版本，附 `entry`。
 - `conflict`：文稿在上次导入后已有编辑，或路径的文件与目录类型冲突；附 `error.code`、`error.message`、`error.details`。其他有效文件继续保存。
 
-同路径更新默认以 `imported_version` 为版本前提。用户检查冲突后，可用 `expected_version` 明确接受覆盖该版本的正文。原始文件变化比较直接使用字节；文件版本和原件通过记录标识关联。
+同路径更新以 `imported_version` 为原件基准。该版本后的保存记录全部为 `editor-initialize` 时，源文件更新直接生成下一版本；其中出现内容编辑或历史恢复时返回冲突。用户检查冲突后，可用 `expected_version` 明确接受覆盖当前版本的正文。原始文件变化比较直接使用字节；文件版本和原件通过记录标识关联。
+
+编辑器首次投影通过 `PATCH /documents/{id}` 的 `change_kind: "editor_initialization"` 保存。版本仍然递增，选段、内容块和讨论上下文按新版本冻结，原件的 `imported_version` 保持原值。前端实际编辑采用默认的 `edit` 类型。已有历史中的 `edit` 记录继续按内容编辑处理，用户可通过冲突确认选择原件。
+
+上传超过 `max_request_bytes` 时，项目批次与普通文件接口均返回 HTTP 413、`upload_too_large`。客户端可保留已选文件并调整当前批次；该请求之前已保存的文件继续保留。
 
 目录快照保存已提交文件。重新选择目录中某些文件或中途取消时，其余已有文件保持原样。导入文件夹的内容继续作为研究材料，实际模型请求按用户选中的文稿或片段形成上下文。
 
@@ -114,3 +118,7 @@ JSON 格式 4 增加 `projects` 和 `project_entries`，并保存文稿全部版
 | 归档 | 41,881,421 字节 JSON 在空数据库恢复后读回一致；ZIP 保存原始目录、空目录及完整状态 |
 
 执行阶段依次为 `fixtures`、`formats`、`projects`、`reimport`、`archive`，命令形式为 `conda run --no-capture-output -n base python tests/project_import_acceptance.py <阶段>`。已有成功记录按项目约定复用。Office 验收独立覆盖 XLSX、XLS、PPTX、PPT；其余列出的 Office 扩展名通过解析库对应接口接入。前端文件夹选择与目录树由本地 `docs/frontend-handoff.md` 的本轮任务完成交互验收。
+
+2026-10-28 的版本语义与超限验收使用 `tests/import_versions_acceptance.py`，从 `tmp/project-import-ui/ui.sqlite3` 只读取得浏览器实际保存的 PPTX 原件、编辑器投影和选段。在 8801 独立实例上，初始化为 v2 后再次导入源文件生成 v3，v2 的文本块和冻结片段保持原值；旧版本保存请求返回 409，实际编辑继续产生导入冲突，经确认覆盖后生成 v5。普通导入文稿也接受首次编辑器初始化。结果见 `.runtime/import-followup/versions.json`。
+
+同一实例将请求上限设置为 524,288 字节，以已有的 656,896 字节 PPT 验证项目批次与普通导入接口，均返回 413、`upload_too_large`。工作区在失败前后保持一致，随后的小文件上传成功。对应命令追加 `--upload-limit`，结果见 `.runtime/import-followup/upload-limit.json`。

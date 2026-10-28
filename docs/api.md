@@ -44,12 +44,18 @@ type DocumentKind = "document" | "note" | "discussion" | "pdf" | "image";
 | `PATCH /workspaces/{id}` | `{name}` → 工作区 |
 | `POST /workspaces/{id}/documents` | `{title, kind?, content, metadata?}` → 文稿 |
 | `GET /documents/{id}` | 当前文稿 |
-| `PATCH /documents/{id}` | `{expected_version, title?, content?, metadata?}` → 新版本文稿 |
+| `PATCH /documents/{id}` | `{expected_version, change_kind?, title?, content?, metadata?}` → 新版本文稿 |
 | `GET /documents/{id}/versions` | 历史版本数组，按版本升序 |
 | `GET /documents/{id}/versions/{version}` | 指定版本 |
 | `POST /documents/{id}/restore` | `{expected_version, version}` → 以历史内容生成的新版本 |
 
 文稿内容变更生成不可变版本。409 响应后重新读取当前内容并保留本地编辑，由用户处理冲突。画布布局变化独立保存。
+
+`change_kind` 默认是 `edit`。客户端首次将导入正文转换为编辑器结构，且用户保持正文、标题和元信息原样时，提交 `editor_initialization`。该请求要求原文稿的 `editor_state` 为空、新内容带有 `editor_state`，标题与元信息保持原值。版本记录的 reason 为 `editor-initialize`，新内容块和版本供选段锚点及冻结上下文引用。用户实际编辑继续提交 `edit`。保存时将类型与内容快照一起确定。
+
+项目重导入保留 `imported_version` 作为原件导入版本。此版本之后的记录全部为 `editor-initialize` 时，源文件更新可以直接生成下一版本；出现内容编辑或历史恢复时返回冲突。显式传入 `expected_version` 继续与当前版本严格匹配。
+
+普通文件和项目文件上传超过 `max_request_bytes` 时，返回 HTTP 413、`error.code = "upload_too_large"` 及调整当前批次或配置的说明。当前请求的文件在完整读取后进入保存事务；超限请求保持已有工作区数据。
 
 ## 画布与关系
 
