@@ -292,9 +292,13 @@ pub fn archive(connection: &Connection, workspace_id: &str) -> Result<WorkspaceA
     for id in asset_ids { assets.push(asset(connection, &id)?); }
     let mut canvas_statement = connection.prepare("SELECT payload FROM canvas_proposals WHERE workspace_id=? ORDER BY created_at,id")?;
     let canvas_proposals = canvas_statement.query_map([workspace_id], |row| parse(row.get(0)?))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(WorkspaceArchive { format_version: 3, workspace: workspace(connection, workspace_id)?, documents, versions: all_versions, canvases: canvases(connection, workspace_id)?, relations: relations(connection, workspace_id)?, anchors: anchors(connection, workspace_id)?, contexts, runs, proposals, canvas_proposals, assets })
+    Ok(WorkspaceArchive { format_version: 4, workspace: workspace(connection, workspace_id)?, documents, versions: all_versions, canvases: canvases(connection, workspace_id)?, relations: relations(connection, workspace_id)?, anchors: anchors(connection, workspace_id)?, contexts, runs, proposals, canvas_proposals, assets, projects: crate::projects::list(connection, workspace_id)?, project_entries: crate::projects::all_entries(connection, workspace_id)? })
 }
 
-pub fn workspace_summary(connection: &Connection, workspace_id: &str) -> Result<Value> {
-    Ok(json!({"workspace": workspace(connection, workspace_id)?, "documents": documents(connection, workspace_id)?, "canvases": canvases(connection, workspace_id)?, "relations": relations(connection, workspace_id)?, "anchors": anchors(connection, workspace_id)?}))
+pub fn workspace_summary(connection: &Connection, workspace_id: &str, project_documents: bool) -> Result<Value> {
+    let documents = if project_documents { documents(connection, workspace_id)? } else {
+        let mut statement = connection.prepare(&format!("{DOCUMENT_SELECT} WHERE d.workspace_id=?1 AND (NOT EXISTS (SELECT 1 FROM project_entries e WHERE e.document_id=d.id) OR d.id IN (SELECT json_extract(o.value,'$.document_id') FROM canvases c,json_each(c.objects) o WHERE c.workspace_id=?1)) ORDER BY d.created_at,d.id"))?;
+        statement.query_map([workspace_id], document_row)?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(json!({"workspace": workspace(connection, workspace_id)?, "documents": documents, "canvases": canvases(connection, workspace_id)?, "relations": relations(connection, workspace_id)?, "anchors": anchors(connection, workspace_id)?, "projects": crate::projects::list(connection, workspace_id)?}))
 }

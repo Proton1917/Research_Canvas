@@ -35,8 +35,11 @@ pub async fn create_workspace(State(state): State<AppState>, Json(input): Json<N
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-pub async fn get_workspace(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    Ok(Json(state.db.call(move |connection| db::workspace_summary(connection, &id)).await?))
+#[derive(Deserialize)]
+pub struct WorkspaceQuery { pub project_documents: Option<bool> }
+
+pub async fn get_workspace(State(state): State<AppState>, Path(id): Path<String>, Query(input): Query<WorkspaceQuery>) -> Result<Json<Value>> {
+    Ok(Json(state.db.call(move |connection| db::workspace_summary(connection, &id, input.project_documents.unwrap_or(true))).await?))
 }
 
 pub async fn rename_workspace(State(state): State<AppState>, Path(id): Path<String>, Json(input): Json<NameInput>) -> Result<Json<Workspace>> {

@@ -207,11 +207,29 @@ type Run = {
 
 | 方法与路径 | 输入及结果 |
 | --- | --- |
-| `POST /workspaces/{id}/imports` | `multipart/form-data`，字段 `file`；支持 PDF、Markdown、文本、图片 → `{document,asset}` |
+| `POST /workspaces/{id}/imports` | multipart 字段 `file`；返回 `{document,asset,text_status,message}` |
+| `GET /imports/capabilities` | 支持格式、PDF 提取方式、批量请求与归档大小、目录分页设置 |
 | `GET /assets/{id}` | 原始文件，按保存的媒体类型响应 |
 | `GET /workspaces/{id}/search?q=...&limit=20` | 当前文稿的标题与正文检索，返回 `{document_id,title,version,score,excerpt}` 数组 |
 | `GET /workspaces/{id}/export` | 完整、可恢复的 JSON 归档 |
 | `GET /workspaces/{id}/export.zip` | 包含 Markdown、关系 SVG、原始资产及完整 JSON 的 ZIP |
 | `POST /workspaces/import` | 提交完整 JSON 归档，恢复原标识及版本；目标工作区标识已存在时返回 409 |
 
-PDF 保留原始文件，提取每页文本作为独立文本块并记录页码。完整归档的 `format_version=3`，包括 `workspace,documents,versions,canvases,relations,anchors,contexts,runs,proposals,canvas_proposals,assets`，保留类型化关系端点。恢复同时接受版本 1 和 2。资产使用 `data_base64` 保存。画布提案包含原始输出、应用与撤销记录，讨论保留模型、运行及冻结来源。
+导入保留原始字节。PDF 使用内置 Rust 解析库，提取每页文字并记录页码。Markdown、`.note`、UTF-8 和带 BOM 的 UTF-16 文本可直接读取；JSON、JSONL、YAML、TOML、CSV、TSV、源码文本按正文及代码格式保存。Notebook 提取 Markdown 与代码单元格，DOCX 提取正文。Excel 读取各工作表的单元格值、坐标和公式，PowerPoint 按幻灯片提取内容；具体格式与字段见 [项目目录与文件导入](project-import.md)。
+
+`text_status` 为 `ready`、`partial`、`image`、`empty`、`attachment` 或 `error`。图像和原始附件可以直接保存；文字层为空或正文提取失败时，原文件保留，并返回具体说明。前端同时显示文件保存结果和正文读取状态。
+
+完整归档的 `format_version=4`，包括 `workspace,documents,versions,canvases,relations,anchors,contexts,runs,proposals,canvas_proposals,assets,projects,project_entries`。恢复接受版本 1 至 4。资产使用 `data_base64` 保存。ZIP 中的 `projects/{project_id}/{relative_path}` 保存导入时的原始文件树，`documents/` 保存当前文稿 Markdown，`workspace.json` 保留完整研究状态。历史版本、冻结来源、目录、空文件夹及原始资产均随归档恢复。
+
+## 项目目录
+
+| 方法与路径 | 输入及结果 |
+| --- | --- |
+| `POST /workspaces/{id}/projects` | `{name}` → 项目；一个工作区可保存多个项目 |
+| `GET /workspaces/{id}/projects` | `{project,file_count,byte_length}[]` |
+| `GET /projects/{id}` | 项目元信息 |
+| `GET /projects/{id}/entries?parent=&after=&limit=` | 当前目录的一页条目，返回 `{project,parent,entries,next_cursor}` |
+| `POST /projects/{id}/imports` | multipart 清单与文件 → `{project,results}` |
+| `GET /workspaces/{id}?project_documents=false` | 按需载入模式：返回普通文稿及画布直接引用的项目文稿，并附项目列表 |
+
+完整清单、路径、冲突、客户端分批和导出约定见 [项目目录与文件导入](project-import.md)。

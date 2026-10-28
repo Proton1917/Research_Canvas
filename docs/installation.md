@@ -166,9 +166,9 @@ max_input_image_bytes = 20971520
 
 ## 从源码构建
 
-源码构建需要 Rust 1.96、Node 22.23.4，以及 PDF 工具 Poppler。依赖按仓库锁文件安装。
+当前源码构建需要 Rust 1.96、Node 22.23.4。PDF、Excel 和 PowerPoint 的文字提取使用程序内置的 Rust 解析库；依赖按仓库锁文件安装。上方发行包说明对应各下载版本。
 
-macOS/Linux 在安装 Rust、Node/npm 和 Poppler 后执行：
+macOS/Linux 在安装 Rust、Node/npm 后执行：
 
 ```bash
 git clone https://github.com/Proton1917/Research_Canvas.git

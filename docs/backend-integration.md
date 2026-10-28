@@ -179,7 +179,7 @@ type ReviewRequest = {
 
 构建安装使用 `bash scripts/backend.sh build`，启动使用 `bash scripts/backend.sh start`。前端继续通过同源 `/api` 调用。画布模式提示词为 `config/prompts/canvas.txt`，通过服务配置的 `[prompts].canvas` 载入。
 
-`tests/canvas_acceptance.py` 使用用户提供的七页产品共识 PDF 与实际模型响应，按 `contexts`、`proposals`、`reviews`、`projection`、`archive`、`undo_evidence`、`archive_scope` 分阶段执行。结果保存在 `.runtime/canvas-acceptance.json`；已成功的阶段复用记录。`tests/canvas_handoff_acceptance.py` 使用前端验收中保存的失败输出、片段和想法验证解析恢复及类型化端点。归档格式为 3，保留场景、画布提案、研究计划字段及人工确认记录。
+`tests/canvas_acceptance.py` 使用用户提供的七页产品共识 PDF 与实际模型响应，按 `contexts`、`proposals`、`reviews`、`projection`、`archive`、`undo_evidence`、`archive_scope` 分阶段执行。结果保存在 `.runtime/canvas-acceptance.json`；已成功的阶段复用记录。`tests/canvas_handoff_acceptance.py` 使用前端验收中保存的失败输出、片段和想法验证解析恢复及类型化端点。当前归档格式为 4，保留项目目录、场景、画布提案、研究计划字段及人工确认记录。
 
 ### 异步来源与图像回归
 

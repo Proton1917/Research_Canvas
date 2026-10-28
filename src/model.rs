@@ -366,4 +366,8 @@ pub struct WorkspaceArchive {
     #[serde(default)]
     pub canvas_proposals: Vec<crate::canvas_proposal::CanvasProposal>,
     pub assets: Vec<Asset>,
+    #[serde(default)]
+    pub projects: Vec<crate::projects::Project>,
+    #[serde(default)]
+    pub project_entries: Vec<crate::projects::ProjectEntry>,
 }

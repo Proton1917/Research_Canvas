@@ -113,3 +113,31 @@ CREATE INDEX IF NOT EXISTS documents_workspace ON documents(workspace_id);
 CREATE INDEX IF NOT EXISTS relations_workspace ON relations(workspace_id);
 CREATE INDEX IF NOT EXISTS relations_target ON relations(target_id, include_in_context);
 CREATE INDEX IF NOT EXISTS runs_workspace ON runs(workspace_id);
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_entries (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  path TEXT NOT NULL,
+  parent_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  document_id TEXT REFERENCES documents(id),
+  asset_id TEXT REFERENCES assets(id),
+  media_type TEXT,
+  byte_length INTEGER NOT NULL,
+  imported_version INTEGER,
+  text_status TEXT NOT NULL,
+  message TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, path),
+  CHECK ((kind='file' AND document_id IS NOT NULL AND asset_id IS NOT NULL AND imported_version>0)
+    OR (kind='directory' AND document_id IS NULL AND asset_id IS NULL AND imported_version IS NULL))
+);
+CREATE INDEX IF NOT EXISTS projects_workspace ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS project_entries_parent ON project_entries(project_id,parent_path,path);
+CREATE INDEX IF NOT EXISTS project_entries_document ON project_entries(document_id);

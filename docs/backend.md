@@ -24,10 +24,9 @@ bash scripts/backend.sh run
 | Cargo 下载缓存 | `.runtime/cargo-home/` |
 | Cargo 构建输出 | `target/` |
 | 安装后的可执行文件 | `.runtime/bin/research-canvas` |
-| PDF 提取中间文件 | `tmp/backend/`，提取操作结束后自动释放 |
 | 服务与构建日志 | `.runtime/logs/` |
 
-PDF 文本提取调用本机 Poppler 的 `pdftotext`。导入文件原始字节保存在 SQLite，页码及文本另存为文稿块。扫描 PDF 的文字识别需要上层另接 OCR；空页文本会按页保留。
+PDF 文本通过内置 `pdf-extract` 从文件字节逐页提取。导入原件保存在 SQLite，页码及文本另存为文稿块。文字层为空的 PDF 返回 `empty`，原件可直接查看；正文提取失败返回具体原因并保留原件。项目目录、Office 与其他格式的导入约定见 [项目目录与文件导入](project-import.md)。
 
 ## 模型连接
 

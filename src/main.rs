@@ -7,10 +7,13 @@ mod config;
 mod context;
 mod db;
 mod endpoints;
+mod file_import;
 mod error;
 mod model;
+mod office_import;
 mod math_text;
 mod provider;
+mod projects;
 mod research;
 mod run_placement;
 mod scene;
@@ -76,7 +79,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/capabilities", get(scene::capabilities))
         .route("/models", get(provider::models))
         .route("/workspaces", get(api::list_workspaces).post(api::create_workspace))
-        .route("/workspaces/import", post(transfer::import_archive))
+        .route("/workspaces/import", post(transfer::import_archive).layer(DefaultBodyLimit::max(state.config.max_archive_bytes)))
         .route("/workspaces/{id}", get(api::get_workspace).patch(api::rename_workspace))
         .route("/workspaces/{id}/documents", post(api::create_document))
         .route("/documents/{id}", get(api::get_document).patch(api::update_document))
@@ -110,6 +113,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/canvas-proposals/{id}/revert", post(canvas_proposal::revert))
         .route("/canvas-proposals/{id}/reject", post(canvas_proposal::reject))
         .route("/workspaces/{id}/imports", post(transfer::import_file))
+        .route("/imports/capabilities", get(projects::capabilities))
+        .route("/workspaces/{id}/projects", get(projects::list_projects).post(projects::create))
+        .route("/projects/{id}", get(projects::read))
+        .route("/projects/{id}/entries", get(projects::entries))
+        .route("/projects/{id}/imports", post(projects::import_files))
         .route("/workspaces/{id}/visual-assets", get(visual_assets::list).post(visual_assets::upload))
         .route("/workspaces/{id}/visual-assets/{asset_id}", axum::routing::delete(visual_assets::discard))
         .route("/assets/{id}", get(transfer::get_asset))

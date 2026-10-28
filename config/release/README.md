@@ -10,7 +10,7 @@ Research Canvas 将科研文稿、公式、来源片段、自由想法和 AI 讨
 
 打开浏览器访问 **http://127.0.0.1:8787**。服务窗口保持运行，停止时按 `Ctrl+C`。文稿与工作区数据保存在本目录的 `.runtime/data/` 中。
 
-PDF 导入使用系统安装的 Poppler；AI 功能使用 `config/server.toml` 配置的模型服务。安装方法、模型配置、升级和故障处理见安装指南。
+PDF、Excel 和 PowerPoint 文字提取由程序内置解析库完成；AI 功能使用 `config/server.toml` 配置的模型服务。安装方法、模型配置、升级和故障处理见安装指南。
 
 版本号见 `VERSION`，源码提交见 `SOURCE_COMMIT`。项目自有代码采用 [MPL-2.0](LICENSE)，随附组件的版权与许可告知位于 `licenses/`。
 

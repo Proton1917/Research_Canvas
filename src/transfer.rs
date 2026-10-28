@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{Cursor, Write}, time::Duration};
+use std::{collections::{HashMap, HashSet}, io::{Cursor, Write}};
 
 use axum::{Json, body::Body, extract::{Multipart, Path, State}, http::{StatusCode, header}, response::{IntoResponse, Response}};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -23,48 +23,15 @@ pub async fn read_upload(mut multipart: Multipart) -> Result<(String, String, ax
 }
 
 pub async fn import_file(State(state): State<AppState>, Path(workspace_id): Path<String>, multipart: Multipart) -> Result<(StatusCode, Json<Value>)> {
-    let (filename, mut media_type, data) = read_upload(multipart).await?;
-    let extension = std::path::Path::new(&filename).extension().and_then(|extension| extension.to_str()).unwrap_or("").to_lowercase();
-    let (kind, content) = if extension == "pdf" || media_type == "application/pdf" {
-        let directory = tempfile::Builder::new().prefix("pdf-").tempdir_in(&state.config.temporary_directory)?;
-        let path = directory.path().join("source.pdf");
-        tokio::fs::write(&path, &data).await?;
-        let mut command = tokio::process::Command::new("pdftotext");
-        command.args(["-layout", "-enc", "UTF-8"]).arg(path).arg("-").kill_on_drop(true);
-        let output = tokio::time::timeout(Duration::from_secs(state.config.pdf_extract_timeout_seconds), command.output()).await
-            .map_err(|_| ApiError::new(StatusCode::REQUEST_TIMEOUT, "pdf_timeout", "PDF 文本提取超时"))?
-            .map_err(|error| if error.kind() == std::io::ErrorKind::NotFound {
-                ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "pdf_tool_missing", "PDF 导入需要 Poppler，请安装 pdftotext 并将其加入 PATH 后重新启动服务")
-            } else { ApiError::from(error) })?;
-        if !output.status.success() { return Err(ApiError::invalid(format!("PDF 文本提取失败：{}", String::from_utf8_lossy(&output.stderr).chars().take(500).collect::<String>()))); }
-        let text = String::from_utf8(output.stdout).map_err(|_| ApiError::invalid("PDF 提取结果不是 UTF-8"))?;
-        let mut pages: Vec<_> = text.split('\u{c}').collect();
-        if pages.last() == Some(&"") { pages.pop(); }
-        let blocks = pages.into_iter().enumerate().map(|(index, text)| TextBlock { id: id(), text: text.trim().to_string(), page: Some((index + 1) as u32) }).collect();
-        media_type = "application/pdf".into();
-        (DocumentKind::Pdf, Content { blocks, ..Content::default() })
-    } else if media_type.starts_with("image/") || matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg") {
-        if media_type == "application/octet-stream" {
-            media_type = match extension.as_str() { "png" => "image/png", "webp" => "image/webp", "gif" => "image/gif", "svg" => "image/svg+xml", _ => "image/jpeg" }.into();
-        }
-        (DocumentKind::Image, Content::default())
-    } else if media_type.starts_with("text/") || matches!(extension.as_str(), "md" | "markdown" | "txt") {
-        let text = String::from_utf8(data.to_vec()).map_err(|_| ApiError::invalid("文本文件需要 UTF-8 编码"))?;
-        let mut content = Content::text(text.clone());
-        if matches!(extension.as_str(), "md" | "markdown") { content.markdown = Some(text); media_type = "text/markdown; charset=utf-8".into(); }
-        else { media_type = "text/plain; charset=utf-8".into(); }
-        (DocumentKind::Document, content)
-    } else { return Err(ApiError::invalid("支持 PDF、Markdown、UTF-8 文本和图片文件")); };
-    let size = data.len();
-    let asset = Asset { id: id(), workspace_id: workspace_id.clone(), filename: filename.clone(), media_type, data_base64: STANDARD.encode(data), created_at: now(), temporary: false };
-    let document = db::new_document(workspace_id, filename, kind, content, json!({"source_asset_id":asset.id,"source_filename":asset.filename}));
+    let (filename, media_type, data) = read_upload(multipart).await?;
+    let file = tokio::task::spawn_blocking(move || crate::file_import::prepare(filename, media_type, data.to_vec())).await.map_err(ApiError::internal)?;
     let result = state.db.call(move |connection| {
         let transaction = connection.transaction()?;
-        db::workspace(&transaction, &document.workspace_id)?;
-        db::insert_asset(&transaction, &asset)?;
-        db::insert_document(&transaction, &document, "import")?;
+        db::workspace(&transaction, &workspace_id)?;
+        let document = file.insert_document(&transaction, &workspace_id)?;
+        let asset = file.asset_view(document.metadata["source_asset_id"].as_str().unwrap());
         transaction.commit()?;
-        Ok(json!({"document":document,"asset":{"id":asset.id,"filename":asset.filename,"media_type":asset.media_type,"byte_length":size,"url":format!("/api/assets/{}",asset.id)}}))
+        Ok(json!({"document":document,"asset":asset,"text_status":file.text_status,"message":file.message}))
     }).await?;
     Ok((StatusCode::CREATED, Json(result)))
 }
@@ -195,6 +162,21 @@ fn zip_archive(archive: &WorkspaceArchive) -> Result<Vec<u8>> {
         zip.start_file(format!("assets/{}", asset.id), options).map_err(ApiError::internal)?;
         zip.write_all(&STANDARD.decode(&asset.data_base64).map_err(ApiError::internal)?)?;
     }
+    let assets: HashMap<_, _> = archive.assets.iter().map(|asset| (&asset.id, asset)).collect();
+    for project in &archive.projects {
+        zip.add_directory(format!("projects/{}/", project.id), options).map_err(ApiError::internal)?;
+    }
+    for entry in &archive.project_entries {
+        let path = format!("projects/{}/{}", entry.project_id, entry.path);
+        match entry.kind {
+            crate::projects::EntryKind::Directory => { zip.add_directory(format!("{path}/"), options).map_err(ApiError::internal)?; },
+            crate::projects::EntryKind::File => {
+                let asset = assets.get(entry.asset_id.as_ref().unwrap()).ok_or_else(|| ApiError::internal("项目原始文件缺失"))?;
+                zip.start_file(path, options).map_err(ApiError::internal)?;
+                zip.write_all(&STANDARD.decode(&asset.data_base64).map_err(ApiError::internal)?)?;
+            },
+        }
+    }
     Ok(zip.finish().map_err(ApiError::internal)?.into_inner())
 }
 
@@ -209,7 +191,7 @@ pub async fn export_zip(State(state): State<AppState>, Path(id): Path<String>) -
 }
 
 fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
-    if !matches!(archive.format_version, 1 | 2 | 3) { return Err(ApiError::invalid("归档版本不受支持")); }
+    if !matches!(archive.format_version, 1 | 2 | 3 | 4) { return Err(ApiError::invalid("归档版本不受支持")); }
     let workspace_id = &archive.workspace.id;
     uuid::Uuid::parse_str(workspace_id).map_err(|_| ApiError::invalid("工作区标识无效"))?;
     let mut all_ids = HashSet::new();
@@ -225,10 +207,32 @@ fn validate_archive(archive: &WorkspaceArchive) -> Result<()> {
         if owner != workspace_id || !all_ids.insert(id) || uuid::Uuid::parse_str(id).is_err() { return Err(ApiError::invalid("归档中的对象标识或工作区归属无效")); }
     }
     let documents: HashSet<_> = archive.documents.iter().map(|document| &document.id).collect();
+    let assets: HashSet<_> = archive.assets.iter().map(|asset| &asset.id).collect();
+    let mut project_ids = HashSet::new();
+    for project in &archive.projects {
+        if project.workspace_id != *workspace_id || uuid::Uuid::parse_str(&project.id).is_err() || !all_ids.insert(&project.id) || !project_ids.insert(&project.id) { return Err(ApiError::invalid("归档项目的标识或工作区归属无效")); }
+    }
+    let mut entry_paths = HashMap::new();
+    for entry in &archive.project_entries {
+        if !project_ids.contains(&entry.project_id) || entry_paths.insert((&entry.project_id, &entry.path), &entry.kind).is_some() || crate::projects::relative_path(&entry.path)? != entry.path { return Err(ApiError::invalid("归档项目路径无效")); }
+        let (parent, name) = entry.path.rsplit_once('/').unwrap_or(("", entry.path.as_str()));
+        if entry.parent_path != parent || entry.name != name { return Err(ApiError::invalid("归档项目目录层级无效")); }
+        match entry.kind {
+            crate::projects::EntryKind::File if entry.document_id.as_ref().is_some_and(|id| documents.contains(id)) && entry.asset_id.as_ref().is_some_and(|id| assets.contains(id)) && entry.imported_version.is_some_and(|version| version > 0) => {},
+            crate::projects::EntryKind::Directory if entry.document_id.is_none() && entry.asset_id.is_none() && entry.imported_version.is_none() => {},
+            _ => return Err(ApiError::invalid("归档项目文件的文稿或原始附件缺失")),
+        }
+    }
     let mut versions = HashMap::new();
     for version in &archive.versions {
         if !documents.contains(&version.document_id) || version.version < 1 || versions.insert((&version.document_id, version.version), version).is_some() { return Err(ApiError::invalid("归档中的文稿版本无效")); }
         db::validate_content(&version.content)?;
+    }
+    for entry in &archive.project_entries {
+        if !entry.parent_path.is_empty() && entry_paths.get(&(&entry.project_id, &entry.parent_path)) != Some(&&crate::projects::EntryKind::Directory) { return Err(ApiError::invalid("归档项目缺少父目录")); }
+        if let (Some(document), Some(version)) = (&entry.document_id, entry.imported_version) {
+            if !versions.contains_key(&(document, version)) { return Err(ApiError::invalid("归档项目缺少导入版本")); }
+        }
     }
     for document in &archive.documents {
         let version = versions.get(&(&document.id, document.current_version)).ok_or_else(|| ApiError::invalid("归档缺少文稿当前版本"))?;
@@ -319,6 +323,8 @@ pub async fn import_archive(State(state): State<AppState>, Json(mut archive): Js
         for proposal in &archive.proposals { db::insert_proposal(&transaction, proposal)?; }
         for proposal in &archive.canvas_proposals { crate::canvas_proposal::insert(&transaction, proposal)?; }
         for asset in &archive.assets { db::insert_asset(&transaction, asset)?; }
+        for project in &archive.projects { crate::projects::insert_project(&transaction, project)?; }
+        for entry in &archive.project_entries { crate::projects::insert_entry(&transaction, entry)?; }
         transaction.commit()?;
         Ok(archive.workspace)
     }).await?;

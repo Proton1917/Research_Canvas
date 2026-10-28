@@ -14,7 +14,7 @@ Research Canvas 是面向科研文稿、数学公式、无限画布和分支讨�
 
 ## 构建与运行
 
-需要 Rust 工具链、Node/npm、Bash，以及用于 PDF 文本提取的 Poppler。开发验证环境为 macOS arm64、Rust 1.96.0、Node 22.23.4。克隆后建立本地配置并构建：
+需要 Rust 工具链、Node/npm 和 Bash。当前源码通过内置 Rust 库提取 PDF 文字。开发验证环境为 macOS arm64、Rust 1.96.0、Node 22.23.4。克隆后建立本地配置并构建：
 
 ```bash
 git clone https://github.com/Proton1917/Research_Canvas.git
@@ -31,6 +31,8 @@ bash scripts/backend.sh start
 配置示例使用本机 Router 的 OAuth Gemini 3.8 Flash，模型标识为 `cc/gemini-3.8-flash-high`。使用此示例需要已有的 Router 服务及相应 OAuth 登录。根据本机服务设置 `config/server.toml` 中的接口地址、客户端标记和模型允许列表；OAuth 凭据由 Router 管理。本地配置文件由 Git 忽略。
 
 SQLite 数据库位于 `.runtime/data/research-canvas.sqlite3`。PDF 原始文件、文本块、文稿版本、画布布局、关系、锚点和模型运行记录均通过本项目后端保存。详细配置、存储位置和验证命令见 [后端说明](docs/backend.md)。
+
+后端项目导入支持目录结构、多项目、按路径更新、Office 材料和按需加载文件正文，接口及支持格式见 [项目目录与文件导入](docs/project-import.md)。
 
 ## 项目结构
 

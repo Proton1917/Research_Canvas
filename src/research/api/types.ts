@@ -49,6 +49,19 @@ export type DocumentKind = 'document' | 'note' | 'discussion' | 'pdf' | 'image';
 export type Workspace = { id: string; name: string; created_at: string; updated_at: string };
 
 export type DocumentMetadata = {
+  project_id?: string;
+  relative_path?: string;
+  file_format?: string;
+  media_type?: string;
+  byte_length?: number;
+  text_status?: FileTextStatus;
+  import_message?: string | null;
+  import_details?: {
+    sheets?: Array<{ name: string; rows: number; columns: number; start_row?: number; start_column?: string; formula_count: number }>;
+    slides?: Array<{ number: number; title: string | null }>;
+    legacy?: boolean;
+    formula_values?: 'stored';
+  };
   source_asset_id?: string;
   source_filename?: string;
   question?: string;
@@ -176,6 +189,7 @@ export type WorkspaceSummary = {
   canvases: Canvas[];
   relations: Relation[];
   anchors: Anchor[];
+  projects: Project[];
 };
 
 export type ResearchMode = 'discussion' | 'rewrite' | 'relation' | 'canvas';
@@ -278,7 +292,30 @@ export type VisualAsset = ImportedAsset & {
   created_at: string;
   references: Array<{ type: 'context' | 'document' | 'document_version' | 'canvas' | 'canvas_proposal'; id: string; version: number | null }>;
 };
-export type ImportResult = { document: ResearchDocument; asset: ImportedAsset };
+export type FileTextStatus = 'ready' | 'partial' | 'image' | 'empty' | 'attachment' | 'error';
+export type ImportResult = { document: ResearchDocument; asset: ImportedAsset; text_status: FileTextStatus; message: string | null };
+
+export type Project = { id: string; workspace_id: string; name: string; created_at: string; updated_at: string };
+export type ProjectSummary = { project: Project; file_count: number; byte_length: number };
+export type ProjectEntry = {
+  project_id: string; path: string; parent_path: string; name: string;
+  kind: 'file' | 'directory'; document_id: string | null; asset_id: string | null;
+  media_type: string | null; byte_length: number; imported_version: number | null;
+  text_status: FileTextStatus | 'directory'; message: string | null; updated_at: string;
+};
+export type ProjectTree = { project: Project; parent: string; entries: ProjectEntry[]; next_cursor: string | null };
+export type ProjectImportResult = {
+  project: Project;
+  results: Array<
+    { path: string; status: 'imported' | 'updated' | 'unchanged'; entry: ProjectEntry }
+    | { path: string; status: 'conflict'; error: ApiErrorBody['error'] }
+  >;
+};
+export type ImportCapabilities = {
+  projects: boolean; relative_paths: boolean; batch_upload: boolean;
+  max_request_bytes: number; max_archive_bytes: number; project_page_size: number; pdf_text: 'builtin';
+  text_encodings: string[]; formats: string[];
+};
 
 export type SearchHit = { document_id: string; title: string; version: number; score: number; excerpt: string };
 

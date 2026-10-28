@@ -97,7 +97,7 @@ def endpoints(args, record):
 def archive(args, record):
     assert args.restore_base, "需要独立恢复服务"
     exported = request(args, "GET", f"/workspaces/{args.workspace}/export")
-    assert exported["format_version"] == 3
+    assert exported["format_version"] == 4
     response = requests.post(args.restore_base + "/workspaces/import", json=exported, timeout=60)
     assert response.status_code == 201, response.text[:1000]
     restored = requests.get(args.restore_base + f"/workspaces/{args.workspace}/export", timeout=60).json()

@@ -6,14 +6,19 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub database: String,
-    pub temporary_directory: String,
     pub frontend_directory: String,
     pub allowed_origins: Vec<String>,
     pub max_request_bytes: usize,
-    pub pdf_extract_timeout_seconds: u64,
+    #[serde(default = "archive_bytes")]
+    pub max_archive_bytes: usize,
+    #[serde(default = "project_page_size")]
+    pub project_page_size: usize,
     pub provider: Provider,
     pub prompts: HashMap<String, String>,
 }
+
+fn project_page_size() -> usize { 200 }
+fn archive_bytes() -> usize { 268_435_456 }
 
 #[derive(Clone, Deserialize)]
 pub struct Provider {
@@ -53,7 +58,6 @@ impl Config {
             reqwest::header::HeaderName::from_bytes(name.as_bytes())?;
             reqwest::header::HeaderValue::from_str(value)?;
         }
-        std::fs::create_dir_all(&config.temporary_directory)?;
         if let Some(parent) = Path::new(&config.database).parent() { std::fs::create_dir_all(parent)?; }
         Ok(config)
     }

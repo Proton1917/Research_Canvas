@@ -123,7 +123,7 @@ def verify(path, platform):
                 assert len(pdf["document"]["content"]["blocks"]) == 7
                 assert "Research Canvas" in "\n".join(block["text"] for block in pdf["document"]["content"]["blocks"])
                 exported = http(base, "GET", f"/api/workspaces/{workspace['id']}/export")
-                assert len(exported["documents"]) == 2 and exported["format_version"] == 3
+                assert len(exported["documents"]) == 2 and exported["format_version"] == 4
                 archive = http(base, "GET", f"/api/workspaces/{workspace['id']}/export.zip")
                 with zipfile.ZipFile(io.BytesIO(archive)) as saved:
                     assert json.loads(saved.read("workspace.json")) == exported

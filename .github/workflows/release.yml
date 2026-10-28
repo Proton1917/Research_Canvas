@@ -90,24 +90,6 @@ jobs:
         run: |
           rustup toolchain install 1.96.0 --profile minimal --target ${{ matrix.target }}
           python -m pip install --target .runtime/python tomli-w==1.2.0
-      - name: 安装 Linux PDF 工具
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
-      - name: 安装 macOS PDF 工具
-        if: runner.os == 'macOS'
-        run: command -v pdftotext || brew install poppler
-      - name: 安装 Windows PDF 工具
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force .runtime/poppler | Out-Null
-          Invoke-WebRequest -Uri 'https://github.com/oschwartz10612/poppler-windows/releases/download/v25.07.0-0/Release-25.07.0-0.zip' -OutFile .runtime/poppler.zip
-          Expand-Archive .runtime/poppler.zip .runtime/poppler
-          $pdfTool = Get-ChildItem .runtime/poppler -Filter pdftotext.exe -Recurse | Select-Object -First 1
-          if ($null -eq $pdfTool) { throw 'Poppler 压缩包中缺少 pdftotext.exe' }
-          Add-Content -Path $env:GITHUB_PATH -Value $pdfTool.Directory.FullName
       - name: 编译发行程序
         id: native-build
         run: |

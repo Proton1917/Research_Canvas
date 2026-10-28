@@ -2,6 +2,7 @@ import type {
   Anchor, AnchorResolution, ApiErrorBody, Canvas, CanvasAction, CanvasProposal, CanvasProposalResult, Capabilities, ReviewRequest, SceneContextRequest, CanvasObject, ContextRequest, Content, DocumentKind,
   DocumentMetadata, DocumentVersion, Health, ImportResult, ModelCatalog, Proposal, ProposalResult, Relation,
   RelationInput, ResearchContext, ResearchDocument, Run, RunProgress, RunPlacementResult, Bounds, VisualAsset, SearchHit, Workspace, WorkspaceSummary,
+  Project, ProjectSummary, ProjectTree, ProjectImportResult, ImportCapabilities,
 } from './types';
 import { TERMINAL_RUN_STATUSES } from './types';
 
@@ -72,7 +73,7 @@ export const api = {
 
   listWorkspaces: () => request<Workspace[]>('/workspaces'),
   createWorkspace: (name: string) => request<Workspace>('/workspaces', { method: 'POST', json: { name } }),
-  getWorkspace: (id: string) => request<WorkspaceSummary>(`/workspaces/${enc(id)}`),
+  getWorkspace: (id: string, options: { projectDocuments?: boolean } = {}) => request<WorkspaceSummary>(`/workspaces/${enc(id)}${options.projectDocuments === false ? '?project_documents=false' : ''}`),
   renameWorkspace: (id: string, name: string) => request<Workspace>(`/workspaces/${enc(id)}`, { method: 'PATCH', json: { name } }),
 
   createDocument: (workspaceId: string, input: { title: string; kind?: DocumentKind; content: Content; metadata?: DocumentMetadata }) =>
@@ -138,6 +139,23 @@ export const api = {
     const form = new FormData();
     form.append('file', file, file.name);
     return request<ImportResult>(`/workspaces/${enc(workspaceId)}/imports`, { method: 'POST', body: form });
+  },
+  importCapabilities: () => request<ImportCapabilities>('/imports/capabilities'),
+  createProject: (workspaceId: string, name: string) => request<Project>(`/workspaces/${enc(workspaceId)}/projects`, { method: 'POST', json: { name } }),
+  listProjects: (workspaceId: string) => request<ProjectSummary[]>(`/workspaces/${enc(workspaceId)}/projects`),
+  getProject: (id: string) => request<Project>(`/projects/${enc(id)}`),
+  projectEntries: (id: string, options: { parent?: string; after?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (options.parent) query.set('parent', options.parent);
+    if (options.after) query.set('after', options.after);
+    if (options.limit != null) query.set('limit', String(options.limit));
+    return request<ProjectTree>(`/projects/${enc(id)}/entries?${query}`);
+  },
+  importProjectFiles: (id: string, files: Array<{ file: File; path: string; expected_version?: number }>, directories: string[] = []) => {
+    const form = new FormData();
+    form.append('manifest', JSON.stringify({ directories, files: files.map((entry, index) => ({ field: String(index), path: entry.path, expected_version: entry.expected_version })) }));
+    files.forEach((entry, index) => form.append(String(index), entry.file, entry.file.name));
+    return request<ProjectImportResult>(`/projects/${enc(id)}/imports`, { method: 'POST', body: form });
   },
   assetUrl: (id: string) => `${BASE}/assets/${enc(id)}`,
   uploadVisual: (workspaceId: string, file: File) => {
