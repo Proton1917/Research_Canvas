@@ -690,6 +690,171 @@
       "evidence": "observed",
       "state": "精确片段讨论分叉两个分支并合并；原稿改为 v2 并刷新后，合并上下文仍引用片段 v1 原文，锚点状态为“原文已改”",
       "evidenceNote": "2026-10-26 在 127.0.0.1:8794 独立验证实例（主验证库副本，后端 f49d8ad，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。文稿内容取自 docs/Research_Canvas_Issues_2026-10-26.pdf 第 2 页。"
+    },
+    {
+      "id": "folder_preview",
+      "title": "项目文件夹导入预览",
+      "image": "screenshots/folder_preview-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "选择 research-inputs：15 个文件、775 KB、11 个目录（2 个空目录随目录清单保存）；node_modules 默认跳过并可勾选纳入；可改项目名或改为导入既有项目",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。测试目录由 .runtime/project-import/inputs 的资料、config/prompts 与 docs/project-import.md 组成，含嵌套目录与空目录。"
+    },
+    {
+      "id": "project_tree",
+      "title": "项目目录树",
+      "image": "screenshots/project_tree-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "一批提交 15 个文件；工作区以 project_documents=false 载入，展开前不读取正文。根目录每页 5 项，“加载更多”取第二页；嵌套目录逐级读取，空目录显示“空目录”",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "folder_two_roots",
+      "title": "同一预览加入两个文件夹",
+      "image": "screenshots/folder_two_roots-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "docs 经上传对话框（94 个文件、29.0 MB，3 个 .DS_Store 默认跳过），config/prompts 经目录选择器，分别新建项目",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "folder_cancelled",
+      "title": "取消后续批次",
+      "image": "screenshots/folder_cancelled-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "第一批提交中取消：已保存 24 个文件（6.86 MB），74 个文件标为“已取消 · 未提交”，项目列表按实际保存数显示；随后“继续导入未保存的文件”完成其余 4 批",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。服务端逐项核对 docs 的 94 个相对路径与字节数，与本地目录一致；同名 discussion.txt 在两个项目中为不同文稿。"
+    },
+    {
+      "id": "file_excel",
+      "title": "Excel 工作表与公式",
+      "image": "screenshots/file_excel-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "文件栏列出项目与相对路径、格式、大小、读取状态、导入版本和原件下载；工作表按钮定位到对应标题。合计单元格显示保存值 27606498，公式 =SUM(B2:B82) 另起一行",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。XLS 与 XLSX 显示相同；打开、定位与刷新后文稿保持导入版本 v1。"
+    },
+    {
+      "id": "file_pptx",
+      "title": "PowerPoint 各页与备注",
+      "image": "screenshots/file_pptx-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "幻灯片标题、要点、表格与备注按 Markdown 结构显示，页次按钮定位；旧版 PPT 标注“旧版格式”，正文中的相对路径按原文显示",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "file_json",
+      "title": "JSON 代码显示",
+      "image": "screenshots/file_json-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "JSON 以代码块显示并高亮；Notebook、笔记、Markdown 与 UTF-16 文本同样首次只做显示转换，打开与刷新后保持 v1",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "file_attachment",
+      "title": "原始附件",
+      "image": "screenshots/file_attachment-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "字体文件保存为原始附件，文件栏显示“原始附件”及服务说明，下载内容与原件字节一致",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "reimport_conflict",
+      "title": "再次导入：复用、更新与冲突",
+      "image": "screenshots/reimport_conflict-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "再次选择 research-inputs 时默认导入既有项目：13 个文件内容相同复用，project.note 原件变化生成新版本；已在工作区编辑为 v2 的 project-import.md 列为冲突，其余文件照常保存",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "reimport_in_place",
+      "title": "已打开文件按新导入版本显示",
+      "image": "screenshots/reimport_in_place-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "更新的 project.note 正在精读视图中打开（仅显示转换）：同一编辑器原位重建为 v2 的正文，导入版本 2，无需刷新",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "reimport_overwrite",
+      "title": "确认覆盖冲突文件",
+      "image": "screenshots/reimport_overwrite-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "从侧栏“查看上次导入结果”回到冲突，勾选“以导入原件覆盖版本 2”：携带 expected_version=2 重传，文稿到 v3；本地编辑由导入正文替换，原件与版本对应关系保留",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。同内容再次导入 docs 时 94 个文件全部复用。"
+    },
+    {
+      "id": "project_canvas",
+      "title": "项目文件放入画布",
+      "image": "screenshots/project_canvas-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "目录菜单“放到当前画布”与拖入画布各放置一个文件；刷新后画布引用的项目文稿随工作区返回，卡片显示表格与幻灯片，文稿仍为 v1",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "project_discussion",
+      "title": "项目材料的模型讨论",
+      "image": "screenshots/project_discussion-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "PowerPoint 备注精确选段与整篇 Excel 作为材料：阅读范围检查一致 2 项，冻结来源为工作簿 v2（含 =SUM(B2:B82)）与片段 v2 原文；回答引用合计 27,606,498 与公式，并按片段列出七项能力",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。创建锚点和冻结上下文时按既有规则写入显示转换，文稿由 v1 到 v2。"
+    },
+    {
+      "id": "project_narrow",
+      "title": "窄屏深色导入预览",
+      "image": "screenshots/project_narrow-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "390px 深色主题下导入预览、目录树与 Excel 文件视图均无横向滚动",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
+    },
+    {
+      "id": "files_import",
+      "title": "普通多文件导入",
+      "image": "screenshots/files_import-image-0.png",
+      "group": "项目导入",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "“导入文件”多选 JSON、Excel 与附件，各自成为工作区文稿并按读取状态提示；“从 JSON 归档恢复工作区”保持单独入口",
+      "evidenceNote": "2026-10-28 在 127.0.0.1:8800 独立验收实例（空数据库，project_page_size = 5，后端 3855e18 构建，模型 cc/gemini-3.8-flash-high）用 Playwright 驱动 Chrome 实测。目录选择器以 OPFS 中按原目录树写入的 FileSystemDirectoryHandle 代替系统对话框，上传对话框路径使用 Playwright 的 webkitdirectory 目录上传。"
     }
   ],
   "edges": [
@@ -1153,6 +1318,103 @@
       "action": "修改原稿并刷新后查看合并上下文",
       "evidence": "observed",
       "back": "关闭"
+    },
+    {
+      "from": "canvas",
+      "to": "folder_preview",
+      "action": "侧栏「项目」→ 导入项目文件夹 → 选择文件夹",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "folder_preview",
+      "to": "project_tree",
+      "action": "开始导入，展开项目目录",
+      "evidence": "observed"
+    },
+    {
+      "from": "folder_preview",
+      "to": "folder_two_roots",
+      "action": "再添加一个文件夹 / 以上传对话框选择",
+      "evidence": "observed"
+    },
+    {
+      "from": "folder_two_roots",
+      "to": "folder_cancelled",
+      "action": "开始导入，第一批提交中取消",
+      "evidence": "observed"
+    },
+    {
+      "from": "folder_cancelled",
+      "to": "project_tree",
+      "action": "继续导入未保存的文件",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "file_excel",
+      "action": "打开 Excel 文件，点工作表定位",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "file_pptx",
+      "action": "打开 PowerPoint 文件",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "file_json",
+      "action": "打开 JSON 文件",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "file_attachment",
+      "action": "打开原始附件，下载原件",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "reimport_conflict",
+      "action": "再次导入同一文件夹",
+      "evidence": "observed"
+    },
+    {
+      "from": "reimport_conflict",
+      "to": "reimport_in_place",
+      "action": "完成，查看已打开的更新文件",
+      "evidence": "observed"
+    },
+    {
+      "from": "reimport_conflict",
+      "to": "reimport_overwrite",
+      "action": "勾选覆盖并确认",
+      "evidence": "observed"
+    },
+    {
+      "from": "project_tree",
+      "to": "project_canvas",
+      "action": "放到当前画布 / 拖入画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "file_pptx",
+      "to": "project_discussion",
+      "action": "选段讨论 + Excel 作为讨论材料，发送",
+      "evidence": "observed"
+    },
+    {
+      "from": "folder_preview",
+      "to": "project_narrow",
+      "action": "390px 深色主题",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "files_import",
+      "action": "导入文件（多选）",
+      "evidence": "observed"
     }
   ],
   "pending": [
@@ -1167,6 +1429,14 @@
     {
       "title": "从原输出恢复成功",
       "reason": "验证库中剩余的失败运行均为内容错误，恢复接口正确拒绝；没有可恢复的围栏输出样本，恢复成功后打开提案的路径未实际触发。"
+    },
+    {
+      "title": "拖放文件夹导入",
+      "reason": "拖放目录依赖系统拖放与 webkitGetAsEntry，自动化浏览器无法构造真实目录条目；代码路径与目录选择器共用预览，未做真机拖放。"
+    },
+    {
+      "title": "导入时已打开文稿有未保存编辑",
+      "reason": "会话保留本地编辑并进入版本冲突；本轮实测的是已保存编辑造成的服务端冲突，未单独构造保存前的并发导入。"
     }
   ],
   "note": "截图来自 2026-10-24 对真实后端（127.0.0.1:8787，模型 cc/gemini-3.8-flash-high）与 Vite 开发服务（5173）的 Playwright 操作，工作区“Research Canvas 前端验收”。覆盖范围与执行条件分别记录在各节点中。 画布共创节点（canvas_ask、canvas_proposal、bridge_review）来自 2026-10-25 在 127.0.0.1:8790 独立验证实例的实测。 交接任务节点（link_views、relate_candidate、bridge_details、ask_*、canvas_stale、canvas_conflict、proposal_materialized、proposal_reverted）来自 2026-10-25 对后端 6bc427f 的实测。 异步协作与图像管理节点（run_pending、run_placed、ask_expired、card_click、visual_library、image_document、ask_vision_error、ask_image_budget、proposal_rebase、proposal_dependent、merge_history）来自 2026-10-26 对后端 f49d8ad 的实测。"

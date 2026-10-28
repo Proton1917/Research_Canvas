@@ -26,10 +26,11 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 
 | 路径 | 内容 |
 | --- | --- |
-| `src/web/app/` | 应用状态与操作（`model.ts`）、提问材料与阅读范围（`materials.ts`）、页面框架（`App.tsx`） |
+| `src/web/app/` | 应用状态与操作（`model.ts`）、项目目录与文件夹导入（`projects.ts`）、提问材料与阅读范围（`materials.ts`）、页面框架（`App.tsx`） |
 | `src/web/views/` | 画布视图（卡片、片段卡片、连线视图、卡片内编辑）、画布原位提问与截图列表（`CanvasAsk.tsx`）、AI 画布提案（`CanvasProposal.tsx`）、学科桥卡（`BridgeCard.tsx`）、待归位记录（`PendingRuns.tsx`）与文稿视图 |
 | `src/web/panels/` | 研究面板：讨论、批注、关系、版本、运行 |
-| `src/web/components/` | 弹窗（上下文、比较、修改预览、版本、检索、PDF、工作区）、Markdown 渲染、编辑器挂载 |
+| `src/web/components/` | 弹窗（上下文、比较、修改预览、版本、检索、PDF、工作区）、项目文件夹导入（`ProjectImport.tsx`）、侧栏项目目录（`ProjectTree.tsx`）、导入文件的来源栏（`FileInfo.tsx`）、Markdown 渲染、编辑器挂载 |
+| `src/web/lib/` | 状态容器、格式化、差异比较，以及文件夹读取（`folders.ts`：目录选择器、`webkitdirectory` 输入与拖放目录） |
 | `src/research/api/` | 接口类型与请求客户端，含 SSE 订阅与重连 |
 | `src/research/editor/` | 工作区适配、编辑会话（保存序号、冲突、重载、画布暂停与采用服务端状态、连线视图）、场景投影（`scene.ts`）、文本块投影、选段换算、资产映射 |
 | `src/ui/` | 按钮、对话框、分段选择、状态指示和滚动跟随组件 |
@@ -40,8 +41,19 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **文稿保存**：每次保存同时提交文本块投影、Markdown 与 `editor_state`（`blocksuite-yjs-v1`，Y.Doc 更新的 Base64）。编辑后约 1.2 秒自动保存，页面隐藏时立即保存。版本冲突（409）时保留本地内容，用户可选择保留本地或载入服务器版本。
 - **文本块投影**：块标识沿用编辑器块标识。标题、引用、列表、代码、公式块写成 Markdown 前缀，行内公式写成 `$…$`，表格写成 GFM 表格。投影可逆：服务端改写清除 `editor_state` 后，前端按文本块重建结构。投影规则新增块类型后，已保存文稿首次打开时自动补存一次文本块，编辑状态保持不变。
 - **锚点**：选段按块内投影文本的 UTF-16 偏移记录，并附带文稿版本。原文修订后由后端返回原位、已重定位、原文已改、定位失效或多处匹配。
-- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿首次打开时只做 Markdown 结构转换，不立即写回；首次编辑、创建批注或发起上下文时再保存，因此未改动的候选文稿可整组撤销。`flushAll`（页面隐藏或刷新、切换工作区、导出）跳过这类仅有显示转换的文稿，服务端版本保持不变。
-- **首次打开的 Markdown 来源**：`markdownSource` 对带 `markdown` 字段的 document、单块 discussion 及带 `metadata.canvas_proposal_id` 的单块 note 取 Markdown 原文，经 `MarkdownTransformer.importMarkdownToBlock` 建立标题、列表、加粗与公式。已有 `editor_state` 或历史编辑状态的文稿按保存内容载入，不再转换。画布卡片与精读视图共用同一文稿 store，显示一致。
+- **保存一致性**：文稿与画布各自维护编辑序号 `seq` 与已确认序号 `savedSeq`。保存在第一次等待前同步取快照，保存期间的新编辑在完成后按序号补存。切换工作区、发起场景上下文和应用画布提案前执行 `flushAll`/`flushCanvas`；仍有未保存或失败的条目时弹出确认框，列出条目与错误，由用户选择重试或放弃。AI 画布提案新建的文稿和项目文件（`metadata.project_id`）首次打开时只做显示转换（Markdown 或段落拆分），不立即写回；首次编辑、创建批注或发起上下文时再保存。因此未改动的候选文稿可整组撤销，项目文件保持导入版本，再次导入时按导入版本判断是否已有编辑。`flushAll`（页面隐藏或刷新、切换工作区、导出）跳过这类仅有显示转换的文稿，服务端版本保持不变。
+- **首次打开的 Markdown 来源**：`markdownSource` 对带 `markdown` 字段的 document、单块 discussion 及带 `metadata.canvas_proposal_id` 的单块 note 取 Markdown 原文，经 `MarkdownTransformer.importMarkdownToBlock` 建立标题、列表、加粗、表格、代码与公式。已有 `editor_state` 或历史编辑状态的文稿按保存内容载入，不再转换。画布卡片与精读视图共用同一文稿 store，显示一致。转换时的三处处理：
+  - 代码块挂载时会把语言名规范为高亮器标识（`bash` 改为标识、未识别的语言置空），这会修改文稿。转换后先按同一规则（`bundledLanguagesInfo`）写入语言，挂载不再产生编辑。
+  - 表格单元格中的 `<br>` 转为单元格内换行（Excel 单元格的保存值与公式分两行显示），文本块投影按 `<br>` 写回 GFM 表格。
+  - 编辑器的 Markdown 预处理只给带协议的独行 URL 加尖括号；`docs/a_b.md` 这类相对路径按原文显示。
+- **项目目录与文件导入**：接口约定见 [project-import.md](project-import.md)。
+  - 载入与刷新工作区使用 `api.getWorkspace(id, {projectDocuments: false})` 和 `api.listProjects`；刷新时保留已按需载入的项目文稿。侧栏“项目”按目录展开，每次展开调用 `api.projectEntries` 读取一页（`project_page_size`），`next_cursor` 存在时显示“加载更多”。项目文件不进入按类别的文稿列表。
+  - 打开、放入画布（菜单或拖入）和选为讨论材料时，`loadDocument` 按 document_id 读取完整文稿并加入工作区摘要；检索结果等其他入口打开未载入的文稿时，精读视图同样先读取。文稿标题为“项目名/相对路径”，来源栏另列项目与路径。
+  - 导入入口：普通“导入文件”多选任意格式（JSON 按研究材料导入，结果提示正文读取状态）；“导入项目文件夹”打开预览；“从 JSON 归档恢复工作区”保持单独入口。文件夹来自目录选择器（`showDirectoryPicker`，包含空目录）、`webkitdirectory` 上传对话框（浏览器不报告空目录）或拖入侧栏/预览区（`webkitGetAsEntry`，每个顶层文件夹一个项目，单个文件按普通导入）。
+  - 预览：每个文件夹显示目标（新建项目或同名的既有项目）、项目名、文件数、字节数、目录与空目录、文件清单和超出 `max_request_bytes` 的文件。缓存、构建目录与系统文件（`.git`、`node_modules`、`dist`、`target`、`.DS_Store` 等）默认跳过，按名称列出数量与字节数，可勾选纳入。
+  - 上传：先 `api.createProject`，再按约 16 MiB、至多 24 个文件分批串行调用 `api.importProjectFiles`；目录清单随该项目第一批提交。进度、各状态计数与逐项结果来自批次响应（新导入、已更新、内容相同 · 复用、版本冲突、未保存），读取状态与说明按 `entry.text_status`/`message` 显示。取消停止后续批次，未提交的文件可“继续导入”；请求失败时已提交批次保留。关闭对话框后上传继续，仍有冲突或未保存文件的结果可从侧栏再次打开。
+  - 冲突：列出工作区当前版本与“查看当前文稿”；勾选“以导入原件覆盖版本 N”后携带 `expected_version` 重传。导入完成后刷新项目列表和已读取的目录。已载入的更新文件由 `adoptImportedDocument` 在原 store 中按新正文重建，继续保持导入版本；有未保存编辑时保留本地内容并进入版本冲突。
+  - 来源栏（`FileInfo`）：项目与相对路径、格式、大小、读取状态及说明、导入版本、原件下载；Excel 列出工作表（范围、公式数），PowerPoint 列出页次与标题，点击定位到正文标题。PDF 原页沿用“原始 PDF”。
 - **画布**：卡片是 `affine:embed-synced-doc`，引用统一文稿；同一文稿可出现在多张画布。画布标题栏下方是固定高度的选择操作行（提问、展开编辑、研究联系等），选择变化时画布位置保持不变。`editor_state` 使用 `view_version: 2`：
   - `link_views`：连线标识 → `{relation_id, source_instance, target_instance, detached_from}`。
   - `hidden_relations`：本画布隐藏的研究关系。
@@ -111,6 +123,43 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **讨论**：侧栏讨论的预览与发送先保存所选文稿；材料在冻结后被修改时（`stale_context`）载入新版本并重新冻结。预览上下文与发送使用同一 `context_id`；生成结果以 SSE 流式显示，回答按 Markdown（含表格与公式）渲染并保存为讨论文稿。讨论脉络按上下文关系组织，合并讨论挂在最近的直接分支下。
 
 ## 验证记录
+
+### 2026-10-28 项目目录与多格式文件导入
+
+在 `127.0.0.1:8800` 独立验收实例上验证（`tmp/project-import-ui/server.toml`，空数据库，`project_page_size = 5`，后端为 `3855e18` 的构建，模型 `cc/gemini-3.8-flash-high`）。Playwright 驱动 Chrome 执行真实点击、拖动与键入。目录选择器由 OPFS 中按原目录树写入的 `FileSystemDirectoryHandle` 代替系统对话框（遍历代码与真实选择相同），上传对话框路径使用 Playwright 的 `webkitdirectory` 目录上传。测试目录 `research-inputs` 由 `.runtime/project-import/inputs/` 的资料、`config/prompts` 与 `docs/project-import.md` 组成，含嵌套目录、两个空目录和 `node_modules`；另两个项目直接选择仓库的 `docs` 和 `config/prompts`。最终构建上从空数据库完整重跑 s1–s7，各阶段控制台错误均为 0。脚本、结果 JSON 和截图在 `tmp/project-import-ui/`（`s1_folder.py`…`s7b_toast.py`、`s*.json`、`shots/`），流程图新增“项目导入”分组。
+
+已验证：
+- **文件夹导入与目录树**（s1）：预览为 15 个文件、793,143 字节、11 个目录（2 个空目录），`node_modules` 1 个文件默认跳过。一批提交，15 个新导入。工作区请求为 `?project_documents=false`，展开目录前没有文稿请求。根目录 7 项分两页（5 + 2），`archive/2026/old` 与 `empty` 显示“空目录”。
+- **格式显示与导入版本**（s2）：逐个打开 11 个文件，均保持 v1，刷新后仍为 v1、无 `editor_state`；下载的原件与源文件字节一致。
+  - XLSX 与 XLS：两张工作表标题和表格，合计单元格显示 27606498，下一行为“公式：=SUM(B2:B82)”，正文中没有字面 `<br>`；工作表按钮定位到“应用版本”。
+  - PPTX：幻灯片标题、要点、备注引用块与表格；页次按钮定位。PPT 标注“旧版格式”。
+  - JSON 为代码块；Notebook、`.note`、Markdown 与 UTF-16 文本显示标题、表格、代码；Word 为正文段落；字体文件为“原始附件”并显示服务说明。
+- **两个项目、取消与继续**（s3）：同一预览加入 `docs`（上传对话框，94 个文件、30,422,091 字节，3 个 `.DS_Store` 默认跳过；含本轮新增的流程图截图）和 `config/prompts`（目录选择器）。第一批提交中取消：保存 24 个文件（6.86 MB），74 个标为未提交，项目列表显示 24 个。继续导入后共 5 个批次，98 个文件全部保存。服务端逐页遍历 `docs` 的 94 个相对路径与字节数，与本地目录一致；`prompts/discussion.txt` 与 `research-inputs/config/prompts/discussion.txt` 为不同文稿。
+- **再次导入与冲突**（s4）：
+  - 在工作区编辑 `notes/project-import.md`（保存为 v2），并打开 `notes/project.note`（v1，仅显示转换）；随后两个源文件各追加一段。
+  - 再次选择该文件夹，目标默认是既有项目：13 个复用，`project.note` 已更新，`project-import.md` 冲突（“工作区文稿在上次导入后已有编辑（当前版本 2），本次未覆盖”）。
+  - 已打开的 `project.note` 不刷新即显示新段落，状态“已保存 · 版本 2”、导入版本 2，`source_versions` 记录两次原件。
+  - 关闭后从侧栏“查看上次导入结果”回到冲突，勾选覆盖：以 `expected_version=2` 重传，文稿到 v3，正文含源文件追加、不含本地编辑。
+  - 同内容再次导入 `docs`：94 个全部复用。
+- **画布与模型讨论**（s5）：
+  - 目录菜单“放到当前画布”放置 XLSX，拖入画布放置 PPT；刷新后两个项目文稿随工作区返回，卡片显示表格和幻灯片，文稿仍为 v1。
+  - 在 PPTX 第 1 页备注三击选段并“讨论选段”，再把 XLSX 作为讨论材料。预览显示“阅读范围与所选材料一致，2 项”。冻结来源为工作簿 v2（5,473 字符，含 `=SUM(B2:B82)` 和合计）与片段 v2（73 字符，原文即所选备注）；两篇文稿按既有规则在建锚点和冻结上下文时由 v1 写为 v2。
+  - 运行成功（`model_used` 为 `gemini-3.8-flash-n`）。回答引用合计 27,606,498 与公式 `=SUM(B2:B82)`，并按片段列出七项能力，未引入材料外内容。
+- **复查与适配**（s6、s7）：旧版 PPT 中的 `docs/.DS_Store` 等相对路径按原文显示；`docs` 根目录 13 项分 3 页，`design/flow/screenshots` 首页 5 项并可继续加载；截图 PNG 作为图像文稿显示。390px 深色主题下目录树、导入预览和 Excel 视图均无横向滚动。普通“导入文件”多选 JSON、XLSX 与字体文件，3 个请求各形成工作区文稿；附件提示“原始附件：原始文件已保存…”；归档恢复保持单独菜单项。
+
+实测发现并已修复：
+- 打开 Notebook、`.note` 和 UTF-16 文本即写成 v2：代码块挂载时规范语言名（`bash` 等）修改了文稿。现在显示转换时先按同一规则写入，打开后保持 v1。
+- Excel 单元格中的 `<br>` 按字面显示：行内适配器把 HTML 节点原样插入。现在 `<br>` 转为单元格内换行。
+- 旧版 PPT 的相对路径显示为 `<docs/.DS_Store>`：编辑器预处理给可解析为相对 URL 的独行文本加尖括号，而 CommonMark 只把带协议的尖括号内容识别为链接。现在只处理带协议的行。
+- 预览把只含子目录的父目录算作空目录；取消后进度显示“83 / 83”；“完成”会丢弃尚未处理的冲突；附件提示重复同一说明。均已改正并在最终重跑中复核。
+
+运行记录：s5 的第一次模型运行因 Router 返回 HTTP 502 失败（`s5-first-attempt-502.json`），直接请求 Router 正常后重跑成功；最终完整重跑的运行一次成功。
+
+未实测与缺项：
+- 拖放文件夹：需要系统拖放产生的目录条目，自动化浏览器无法构造；代码与目录选择器共用预览与上传。
+- 导入时已打开的文稿有未保存编辑：代码保留本地内容并进入版本冲突，本轮未构造。
+- 单个文件超过 `max_request_bytes` 的提示：验收资料最大 1.5 MB，未触发。
+- 普通“导入文件”形成的非项目文稿仍按原有规则在首次打开时写回显示转换。
 
 ### 2026-10-26 画布提案便笺的 Markdown 显示
 
@@ -315,4 +364,4 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 
 生产界面另在 `127.0.0.1:8789` 的独立 SQLite 验证实例中完成了文稿中文编辑、自动保存、编辑器图片拖放、刷新后的图片恢复及文稿放入画布。图片以 UUID 标识保存；文稿内容版本与画布布局版本分别记录。
 
-尚未实测：系统中文输入法的组合输入（代码按 `isComposing` 跳过回车发送）、Markdown/文本文件导入，以及系统文件选择器的自动化操作。两个客户端的保存冲突已在 2026-10-25 交接任务中验证。
+尚未实测：系统中文输入法的组合输入（代码按 `isComposing` 跳过回车发送）、Markdown/文本文件导入，以及系统文件选择器的自动化操作（后两项已于 2026-10-28 实测，见上）。两个客户端的保存冲突已在 2026-10-25 交接任务中验证。
