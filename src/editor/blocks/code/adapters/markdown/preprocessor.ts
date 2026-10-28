@@ -58,7 +58,11 @@ const codePreprocessor: MarkdownAdapterPreprocessor = {
           //
           // eg. /MuawcBMT1Mzvoar09-_66?mode=page&blockIds=rL2_GXbtLU2SsJVfCSmh_
           // https://www.markdownguide.org/basic-syntax/#urls-and-email-addresses
-          const valid = isValidUrl(trimmedLine);
+          // An angle-bracket autolink requires a scheme; wrapping a relative
+          // path such as `docs/a_b.md` would render the brackets literally.
+          const valid =
+            /^[a-zA-Z][a-zA-Z0-9+.-]{1,31}:/.test(trimmedLine) &&
+            isValidUrl(trimmedLine);
           if (valid) {
             return `<${trimmedLine}>`;
           }

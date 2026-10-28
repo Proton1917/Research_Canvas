@@ -3,12 +3,13 @@ import {
   api, ApiError, type Anchor, type AnchorResolution, type Canvas, type CanvasAction, type CanvasProposal, type CanvasProposalResult,
   type Capabilities, type Claim, type DocumentKind, type Health,
   type EditorStateEnvelope, type ModelCatalog, type Proposal, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
-  type Bounds, type ContextChange, type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type VisualAsset, type Workspace, type WorkspaceSummary,
+  type Bounds, type ContextChange, type ProjectSummary, type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type VisualAsset, type Workspace, type WorkspaceSummary,
 } from '@research';
 import {
   type ConnectorEnd, type LinkEvent, type PendingSave, relationEndpoint, ResearchSession, type SceneLayout, type SceneProjection, type SelectionTarget, setEditorColorScheme, setPrimaryMode,
 } from '@research/editor';
 
+import { TEXT_STATUS_LABEL, TEXT_STATUS_NOTE } from '../lib/format';
 import { createStore, useStore } from '../lib/store';
 import {
   type ExpectedSource, expectedFromMaterials, inheritedSources, type Material,
@@ -153,6 +154,8 @@ export type AppState = {
   placements: Record<string, PlacementState>;
   /** 提问截图及其引用；null 表示尚未读取 */
   visualAssets: VisualAsset[] | null;
+  /** 工作区中的项目及文件数、字节数 */
+  projects: ProjectSummary[];
 };
 
 /** retry：冲突处理后（画布保存或载入服务器版本）自动重新归位 */
@@ -213,6 +216,7 @@ export const app = createStore<AppState>({
   bridge: null,
   placements: {},
   visualAssets: null,
+  projects: [],
 });
 
 export const useApp = <S,>(selector: (state: AppState) => S) => useStore(app, selector);
@@ -369,13 +373,15 @@ export async function openWorkspace(id: string, options: { discard?: boolean } =
   app.set({
     workspaceId: id, summary: null, runs: [], contexts: {}, proposals: {}, resolutions: {}, loadingWorkspace: true,
     workspaceError: null, view: { type: 'empty' }, canvasSelection: null, selectedRelationId: null, composer: emptyComposer, picked: [],
-    sceneIds: [], ask: null, expectations: {}, bridge: null, canvasProposals: {}, proposalDraft: null, placements: {}, visualAssets: null,
+    sceneIds: [], ask: null, expectations: {}, bridge: null, canvasProposals: {}, proposalDraft: null, placements: {}, visualAssets: null, projects: [],
   });
+  documentLoads.clear();
   try {
-    const [summary, runs] = await Promise.all([api.getWorkspace(id), api.listRuns(id)]);
+    // 项目文件按需载入：工作区只返回普通文稿与画布直接引用的项目文稿
+    const [summary, runs, projects] = await Promise.all([api.getWorkspace(id, { projectDocuments: false }), api.listRuns(id), api.listProjects(id)]);
     if (session.workspaceId !== id) return;
     session.setRelations(summary.relations);
-    app.set({ summary, runs, loadingWorkspace: false });
+    app.set({ summary, runs, projects, loadingWorkspace: false });
     runs.filter(run => !TERMINAL_RUN_STATUSES.includes(run.status)).forEach(run => watchRun(run.id));
     void loadDiscussionContexts();
     const savedCanvas = readLocal(`rc:canvas:${id}`);
@@ -423,10 +429,14 @@ export async function refreshSummary() {
   const id = app.get().workspaceId;
   if (!id) return;
   try {
-    const summary = await api.getWorkspace(id);
+    const [fresh, projects] = await Promise.all([api.getWorkspace(id, { projectDocuments: false }), api.listProjects(id)]);
     if (app.get().workspaceId !== id) return;
-    session?.setRelations(summary.relations);
-    app.set({ summary });
+    session?.setRelations(fresh.relations);
+    // 已按需载入的项目文稿不在摘要中，继续保留
+    const listed = new Set(fresh.documents.map(doc => doc.id));
+    const kept = (app.get().summary?.documents ?? []).filter(doc => doc.metadata.project_id && !listed.has(doc.id));
+    const summary = { ...fresh, documents: [...fresh.documents, ...kept] };
+    app.set({ summary, projects });
     const view = app.get().view;
     if (view.type === 'canvas') session?.syncCanvasRelations(view.id);
   } catch (error) {
@@ -434,13 +444,37 @@ export async function refreshSummary() {
   }
 }
 
-function upsertDocument(doc: ResearchDocument) {
+export function upsertDocument(doc: ResearchDocument) {
   app.set(state => {
     if (!state.summary) return {};
     const exists = state.summary.documents.some(item => item.id === doc.id);
     const documents = exists ? state.summary.documents.map(item => (item.id === doc.id ? doc : item)) : [...state.summary.documents, doc];
     return { summary: { ...state.summary, documents } };
   });
+}
+
+const documentLoads = new Map<string, Promise<ResearchDocument | null>>();
+
+/**
+ * 取得完整文稿：已在工作区摘要中时直接返回，否则读取 `GET /documents/{id}` 并加入摘要。
+ * 项目文件在打开、放入画布或选为材料时经此载入。
+ */
+export function loadDocument(id: string): Promise<ResearchDocument | null> {
+  const known = documentById(id);
+  if (known) return Promise.resolve(known);
+  const pending = documentLoads.get(id);
+  if (pending) return pending;
+  const workspaceId = app.get().workspaceId;
+  const task = api.getDocument(id).then(doc => {
+    if (app.get().workspaceId !== workspaceId || doc.workspace_id !== workspaceId) return null;
+    upsertDocument(doc);
+    return documentById(id) ?? doc;
+  }).catch(error => {
+    reportError(error, '文稿读取失败：');
+    return null;
+  }).finally(() => documentLoads.delete(id));
+  documentLoads.set(id, task);
+  return task;
 }
 
 function upsertCanvas(canvas: Canvas) {
@@ -598,6 +632,7 @@ function onCanvasQueue<T>(canvasId: string, task: () => Promise<T>): Promise<T> 
 }
 
 export async function placeOnCanvas(documentId: string, near?: string | null, point?: [number, number]) {
+  if (!(await loadDocument(documentId))) return null;
   const actions = await waitCanvasActions();
   if (!actions) return null;
   try {
@@ -636,6 +671,7 @@ export async function discussInPlace(documentId: string, target: SelectionTarget
   }
 }
 
+/** 普通多文件导入：每个文件形成一篇工作区文稿，正文读取状态随提示显示。 */
 export async function importFiles(files: File[], options: { place?: boolean } = {}) {
   const workspaceId = app.get().workspaceId;
   if (!workspaceId) return;
@@ -644,7 +680,8 @@ export async function importFiles(files: File[], options: { place?: boolean } = 
       const result = await api.importFile(workspaceId, file);
       upsertDocument(result.document);
       const pages = result.document.kind === 'pdf' ? `，共 ${result.document.content.blocks.length} 页` : '';
-      toast(`已导入「${result.document.title}」${pages}`, 'success', { label: '打开', run: () => openDocument(result.document.id) });
+      const note = result.text_status === 'ready' ? '' : `（${result.message ? `${TEXT_STATUS_LABEL[result.text_status]}：${result.message}` : TEXT_STATUS_NOTE[result.text_status]}）`;
+      toast(`已导入「${result.document.title}」${pages}${note}`, result.text_status === 'error' ? 'error' : 'success', { label: '打开', run: () => openDocument(result.document.id) });
       if (options.place) await placeOnCanvas(result.document.id);
     } catch (error) {
       reportError(error, `导入「${file.name}」失败：`);
@@ -728,6 +765,8 @@ export function updateComposer(patch: Partial<Composer>) {
 }
 
 export function addMaterialDocument(id: string) {
+  // 项目文件按需取得完整文稿，材料列表随之显示项目与路径
+  if (!documentById(id)) void loadDocument(id);
   app.set(state => ({
     composer: state.composer.documentIds.includes(id) ? state.composer : { ...state.composer, documentIds: [...state.composer.documentIds, id] },
     tab: 'discuss',

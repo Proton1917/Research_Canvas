@@ -83,6 +83,10 @@ export const markdownHtmlToDeltaMatcher = MarkdownASTToDeltaExtension({
     if (!('value' in ast)) {
       return [];
     }
+    // GFM table cells cannot contain newlines; line breaks are written as <br>.
+    if (/^<br\s*\/?>$/i.test(ast.value)) {
+      return [{ insert: '\n' }];
+    }
     return [{ insert: ast.value }];
   },
 });

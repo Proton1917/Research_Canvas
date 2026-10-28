@@ -11,7 +11,7 @@ import { Button, QuietDotsWave } from '@ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  addMaterialDocument, app, createAnchor, createDocument, createRelation, discussInPlace, documentMap, errorText, getSession,
+  addMaterialDocument, app, createAnchor, createDocument, createRelation, discussInPlace, documentMap, errorText, getSession, loadDocument,
   hideRelationOnCanvas, importFiles, openAsk, openBridge, openDocument, placeFragment, registerCanvasActions, relateConnector,
   renameCanvas, setCanvasSelection, setSceneIds, setTab, toast, useApp,
 } from '../app/model';
@@ -296,7 +296,8 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     event.stopPropagation();
     const gfx = gfxRef.current;
     const point = gfx?.viewport.toModelCoordFromClientCoord([event.clientX, event.clientY]);
-    void placeDocument(documentId, null, point ? [point[0] - 80, point[1] - 40] : undefined);
+    // 项目文件按需取得完整文稿后放置
+    void loadDocument(documentId).then(doc => doc && placeDocument(documentId, null, point ? [point[0] - 80, point[1] - 40] : undefined));
   }, [placeDocument]);
 
   const surface = useRef<HTMLDivElement>(null);

@@ -1,6 +1,6 @@
 import {
   ChatWithAiIcon, CloseIcon, CommentIcon, DarkModeIcon, DownloadIcon, EdgelessIcon, HistoryIcon, ImportIcon, LightModeIcon,
-  LinkIcon, MoreHorizontalIcon, NoteShadowDuotoneIcon, PageIcon, PlusIcon, SearchIcon, SidebarIcon, TimelineIcon,
+  FolderIcon, LinkIcon, MoreHorizontalIcon, NoteShadowDuotoneIcon, PageIcon, PlusIcon, SearchIcon, SidebarIcon, TimelineIcon,
 } from '@blocksuite/icons/rc';
 import type { DocumentKind, ResearchDocument } from '@research';
 import { Button, ClayBreatheDot, PulseRunningDot, SegmentedControl } from '@ui';
@@ -8,6 +8,9 @@ import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Dialogs } from '../components/dialogs';
 import { KindIcon, MenuItem, Popover, SectionTitle } from '../components/common';
+import { dropFolders, ProjectImportDialog } from '../components/ProjectImport';
+import { ProjectsSection } from '../components/ProjectTree';
+import { hasDroppedFiles } from '../lib/folders';
 import { AnchorsPanel } from '../panels/AnchorsPanel';
 import { DiscussionPanel } from '../panels/DiscussionPanel';
 import { RelationsPanel } from '../panels/RelationsPanel';
@@ -20,6 +23,7 @@ import {
   addMaterialDocument, app, boot, checkHealth, createCanvas, createDocument, dismissToast, exportWith, getSession,
   importFiles, openCanvas, openDocument, placeOnCanvas, restoreArchive, setDialogs, setTab, setTheme, useApp, type PanelTab,
 } from './model';
+import { openImportDialog } from './projects';
 
 function ConnectionPill() {
   const connection = useApp(state => state.connection);
@@ -70,12 +74,13 @@ function Header() {
         <Button size="icon-sm" variant="ghost" className="md:hidden" aria-label="检索" icon={<SearchIcon width={18} height={18} />} onClick={() => setDialogs({ search: true })} />
         <ConnectionPill />
         <Button size="sm" variant="ghost" className="hidden sm:inline-flex" icon={<ImportIcon width={16} height={16} />} onClick={() => fileInput.current?.click()}>导入</Button>
-        <input ref={fileInput} type="file" multiple hidden accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf,image/*"
+        <input ref={fileInput} type="file" multiple hidden data-testid="file-input"
           onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void importFiles(files, { place: view.type === 'canvas' }); }} />
         <div className="relative">
           <Button size="icon-sm" variant="ghost" aria-label="导出与归档" aria-expanded={menu} icon={<MoreHorizontalIcon width={18} height={18} />} onClick={() => setMenu(open => !open)} />
           <Popover open={menu} onClose={() => setMenu(false)} className="right-0 w-60">
-            <MenuItem icon={<ImportIcon width={16} height={16} />} onClick={() => { setMenu(false); fileInput.current?.click(); }}>导入 PDF、Markdown、文本或图片</MenuItem>
+            <MenuItem icon={<ImportIcon width={16} height={16} />} hint="多选" onClick={() => { setMenu(false); fileInput.current?.click(); }}>导入文件（JSON、笔记、Office、PDF 等）</MenuItem>
+            <MenuItem icon={<FolderIcon width={16} height={16} />} hint="保留路径" onClick={() => { setMenu(false); openImportDialog(); }}>导入项目文件夹</MenuItem>
             <MenuItem icon={<DownloadIcon width={16} height={16} />} hint="可恢复" onClick={() => { setMenu(false); void exportWith('json'); }}>导出完整 JSON 归档</MenuItem>
             <MenuItem icon={<DownloadIcon width={16} height={16} />} hint="Markdown · SVG" onClick={() => { setMenu(false); void exportWith('zip'); }}>导出 ZIP（文稿与关系图）</MenuItem>
             <MenuItem icon={<HistoryIcon width={16} height={16} />} onClick={() => { setMenu(false); archiveInput.current?.click(); }}>从 JSON 归档恢复工作区</MenuItem>
@@ -131,14 +136,24 @@ function Sidebar() {
   const error = useApp(state => state.workspaceError);
   const connection = useApp(state => state.connection);
   const fileInput = useRef<HTMLInputElement>(null);
-  const groups = useMemo(() => GROUPS.map(group => ({ ...group, docs: (summary?.documents ?? []).filter(doc => doc.kind === group.kind).sort((a, b) => b.updated_at.localeCompare(a.updated_at)) })), [summary?.documents]);
+  // 项目文件在项目目录中列出，不进入按类别的文稿列表
+  const groups = useMemo(() => GROUPS.map(group => ({ ...group, docs: (summary?.documents ?? []).filter(doc => doc.kind === group.kind && !doc.metadata.project_id).sort((a, b) => b.updated_at.localeCompare(a.updated_at)) })), [summary?.documents]);
+  const [dropping, setDropping] = useState(false);
   return (
-    <nav aria-label="工作区导航" className="flex h-full min-h-0 flex-col">
+    <nav
+      aria-label="工作区导航"
+      className={`flex h-full min-h-0 flex-col ${dropping ? 'bg-clay/5 outline-dashed outline-1 -outline-offset-4 outline-clay' : ''}`}
+      // 从系统拖入文件夹：每个顶层文件夹进入导入预览，单个文件按普通文件导入
+      onDragOver={event => { if (summary && hasDroppedFiles(event.dataTransfer)) { event.preventDefault(); setDropping(true); } }}
+      onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); }}
+      onDrop={event => { if (!hasDroppedFiles(event.dataTransfer)) return; event.preventDefault(); setDropping(false); void dropFolders(event); }}
+    >
       <div className="flex gap-1 p-2">
         <Button size="sm" variant="secondary" className="flex-1" icon={<PlusIcon width={16} height={16} />} disabled={!summary} onClick={() => void createDocument('document', '', { open: true })}>新文稿</Button>
         <Button size="sm" variant="ghost" icon={<NoteShadowDuotoneIcon width={16} height={16} />} disabled={!summary} onClick={() => void createDocument('note', '', { place: view.type === 'canvas', open: view.type !== 'canvas' })}>想法</Button>
-        <Button size="icon-sm" variant="ghost" aria-label="导入文件" disabled={!summary} icon={<ImportIcon width={16} height={16} />} onClick={() => fileInput.current?.click()} />
-        <input ref={fileInput} type="file" multiple hidden accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf,image/*"
+        <Button size="icon-sm" variant="ghost" aria-label="导入文件" title="导入文件（JSON、笔记、Office、PDF、图片及其他附件）" disabled={!summary} icon={<ImportIcon width={16} height={16} />} onClick={() => fileInput.current?.click()} />
+        <Button size="icon-sm" variant="ghost" aria-label="导入项目文件夹" title="导入项目文件夹" disabled={!summary} icon={<FolderIcon width={16} height={16} />} onClick={openImportDialog} />
+        <input ref={fileInput} type="file" multiple hidden
           onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void importFiles(files); }} />
       </div>
       <div className="rc-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-4">
@@ -159,6 +174,7 @@ function Sidebar() {
                 </li>
               ))}
             </ul>
+            <ProjectsSection />
             {groups.filter(group => group.docs.length > 0).map(group => (
               <div key={group.kind}>
                 <SectionTitle>{group.label} · {group.docs.length}</SectionTitle>
@@ -167,8 +183,8 @@ function Sidebar() {
                 </ul>
               </div>
             ))}
-            {summary.documents.length === 0 && (
-              <p className="px-2 py-4 text-xs leading-relaxed text-ink-muted">新建文稿或导入调研 PDF、Markdown、文本和图片，再拖到画布中组织。</p>
+            {groups.every(group => group.docs.length === 0) && (
+              <p className="px-2 py-4 text-xs leading-relaxed text-ink-muted">新建文稿或导入 PDF、Markdown、笔记、JSON、Office 文件和图片，再拖到画布中组织。</p>
             )}
           </>
         )}
@@ -281,6 +297,7 @@ export function App() {
       </div>
       <Toasts />
       <Dialogs />
+      <ProjectImportDialog />
     </div>
   );
 }

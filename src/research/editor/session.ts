@@ -4,6 +4,7 @@ import { MarkdownAdapter, titleMiddleware } from '@editor/shared/adapters';
 import type { Store } from '@editor/document';
 import { MarkdownTransformer } from '@editor/widgets/linked-doc';
 import { Text } from '@editor/document';
+import { bundledLanguagesInfo } from 'shiki';
 import * as Y from 'yjs';
 
 import { api, ApiError } from '../api/client';
@@ -310,6 +311,10 @@ export class ResearchSession {
         store.resetHistory();
       }
     }
+    if (convertAfterLoad) {
+      normalizeCodeLanguages(store);
+      store.resetHistory();
+    }
     if (readonly) store.readonly = true;
 
     bsDoc.spaceDoc.on('update', () => {
@@ -318,8 +323,9 @@ export class ResearchSession {
     });
     entry.suppress = 0;
     this._docs.set(doc.id, entry);
-    // AI 画布提案新建的文稿在用户编辑前保持服务端版本，整组撤销据此判断无后续修改
-    if (convertAfterLoad && !upgradeProjection && doc.metadata.canvas_proposal_id) entry.deferred = true;
+    // AI 画布提案新建的文稿在用户编辑前保持服务端版本，整组撤销据此判断无后续修改；
+    // 项目文件同样保持导入版本，再次导入时按导入版本判断是否已有编辑
+    if (convertAfterLoad && !upgradeProjection && (doc.metadata.canvas_proposal_id || doc.metadata.project_id)) entry.deferred = true;
     else if (convertAfterLoad || upgradeProjection) this._markDocDirty(entry);
     this._emit();
     return entry;
@@ -521,6 +527,62 @@ export class ResearchSession {
     entry.savedSeq = entry.seq;
     entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
     this._emit();
+  }
+
+  /**
+   * 再次导入项目文件生成了新版本：已载入且没有本地编辑（含仅有显示转换）的文稿按新正文重建，
+   * 沿用同一 store，画布卡片与精读视图保持挂载，并继续保持导入版本；
+   * 有未保存的编辑时保留本地内容并进入版本冲突，由用户选择。返回是否已采用。
+   */
+  async adoptImportedDocument(doc: ResearchDocument): Promise<boolean> {
+    const entry = this._docs.get(doc.id);
+    if (!entry || entry.status.version >= doc.current_version) return false;
+    if (entry.saving || (!entry.deferred && entry.seq !== entry.savedSeq)) {
+      entry.status = { ...entry.status, state: 'conflict', conflictVersion: doc.current_version, error: '项目导入已更新此文件，本地修改尚未保存' };
+      this._emit();
+      return false;
+    }
+    clearTimeout(entry.timer);
+    const { store } = entry;
+    entry.suppress++;
+    const wasReadonly = store.readonly;
+    let converted = false;
+    try {
+      if (wasReadonly) store.readonly = false;
+      const markdown = markdownSource(doc);
+      const note = store.getModelsByFlavour('affine:note')[0];
+      if (doc.kind === 'image') {
+        const image = store.getModelsByFlavour('affine:image')[0];
+        if (image && doc.metadata.source_asset_id) store.updateBlock(image, { sourceId: doc.metadata.source_asset_id } as never);
+      } else if (markdown && note) {
+        const previous = note.children.slice();
+        await MarkdownTransformer.importMarkdownToBlock({ doc: store, markdown, blockId: note.id, extensions: getStoreExtensions() });
+        previous.forEach(model => store.deleteBlock(model));
+        converted = true;
+      } else if (doc.kind !== 'pdf' && doc.content.blocks.length === 1 && doc.content.blocks[0].text.includes('\n\n')) {
+        reconcileStore(store, doc.title, splitParagraphs(doc.content.blocks[0]), true);
+        converted = true;
+      } else {
+        reconcileStore(store, doc.title, doc.content.blocks, doc.kind !== 'pdf');
+      }
+      if (converted) normalizeCodeLanguages(store);
+      store.resetHistory();
+    } finally {
+      if (wasReadonly) store.readonly = true;
+      entry.suppress--;
+    }
+    entry.doc = doc;
+    entry.pages = new Map(doc.content.blocks.filter(block => block.page != null).map(block => [block.id, block.page!]));
+    entry.savedSeq = entry.seq;
+    entry.deferred = converted;
+    entry.status = { state: entry.readonly ? 'readonly' : 'saved', version: doc.current_version, savedAt: Date.now(), seq: entry.seq, savedSeq: entry.savedSeq };
+    this._emit();
+    return true;
+  }
+
+  /** 仅有首次显示转换、尚未写回的文稿。 */
+  isDeferred(id: string) {
+    return !!this._docs.get(id)?.deferred;
   }
 
   /** 后端修改了标题或元数据但正文未改变时同步版本号。 */
@@ -1084,6 +1146,20 @@ export class ResearchSession {
 }
 
 /** 导入的 Markdown、AI 讨论正文及 AI 画布提案便笺首次打开时按 Markdown 结构建立编辑器内容。 */
+/**
+ * 代码块挂载时会把语言名规范为高亮器的标识（别名改为标识，未识别的语言置空）。
+ * 显示转换后预先按同一规则写入，挂载不再修改文稿，仅有显示转换的文稿保持服务端版本。
+ */
+function normalizeCodeLanguages(store: Store) {
+  for (const model of store.getModelsByFlavour('affine:code')) {
+    const language = (model.props as { language?: string | null }).language ?? null;
+    if (language === null) continue;
+    const info = bundledLanguagesInfo.find(item => item.id === language || item.name === language || item.aliases?.includes(language));
+    const next = info?.id ?? null;
+    if (next !== language) store.updateBlock(model, { language: next } as never);
+  }
+}
+
 function markdownSource(doc: ResearchDocument): string | null {
   if (doc.content.blocks.length > 1) return null;
   if (doc.kind === 'document' && doc.content.markdown) return doc.content.markdown;

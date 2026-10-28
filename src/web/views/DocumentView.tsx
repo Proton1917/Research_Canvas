@@ -8,13 +8,14 @@ import { Button, QuietDotsWave } from '@ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  addMaterialDocument, createAnchor, discussSelection, errorText, getSession, placeOnCanvas, refreshResolutions,
+  addMaterialDocument, createAnchor, discussSelection, errorText, getSession, loadDocument, placeOnCanvas, refreshResolutions,
   setDialogs, setTab, toast, useApp,
 } from '../app/model';
 import { useSession } from '../app/useSession';
 import { ConflictBar } from '../components/ConflictBar';
 import { Chip, KindIcon, SaveIndicator } from '../components/common';
 import { EditorHost } from '../components/EditorHost';
+import { FileInfo } from '../components/FileInfo';
 import { KIND_LABEL } from '../lib/format';
 
 type Floating = { target: SelectionTarget; top: number; left: number; page: number | null } | null;
@@ -35,6 +36,16 @@ export function DocumentView({ documentId, focusAnchorId }: { documentId: string
   const stdRef = useRef<BlockStdScope | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(0);
+  const [fetching, setFetching] = useState(false);
+
+  // 项目文件等未在工作区摘要中的文稿：按 document_id 取得完整文稿
+  useEffect(() => {
+    if (doc || !session) return;
+    let cancelled = false;
+    setFetching(true);
+    void loadDocument(documentId).finally(() => { if (!cancelled) setFetching(false); });
+    return () => { cancelled = true; };
+  }, [documentId, session, !!doc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,9 +59,9 @@ export function DocumentView({ documentId, focusAnchorId }: { documentId: string
       .then(loaded => { if (!cancelled) setStore(loaded); })
       .catch(err => { if (!cancelled) setError(errorText(err)); });
     return () => { cancelled = true; };
-    // 只在切换文稿或工作区时重新载入
+    // 只在切换文稿、工作区或按需取得文稿后载入
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentId, session]);
+  }, [documentId, session, !!doc]);
 
   const status = session?.docStatus(documentId) ?? null;
   const docAnchors = (anchors ?? []).filter(anchor => anchor.document_id === documentId);
@@ -160,7 +171,10 @@ export function DocumentView({ documentId, focusAnchorId }: { documentId: string
     }
   };
 
-  if (!doc) return <div className="p-6 text-sm text-ink-muted">文稿不存在或已从工作区移除。</div>;
+  if (!doc) {
+    if (fetching) return <div className="flex h-full items-center justify-center"><QuietDotsWave label="读取文稿" /></div>;
+    return <div className="p-6 text-sm text-ink-muted">文稿不存在或已从工作区移除。</div>;
+  }
   const assetId = doc.metadata.source_asset_id;
 
   return (
@@ -180,6 +194,7 @@ export function DocumentView({ documentId, focusAnchorId }: { documentId: string
           <Button size="sm" variant="secondary" icon={<EdgelessIcon width={16} height={16} />} onClick={() => void placeOnCanvas(doc.id)}>放到画布</Button>
         </div>
       </div>
+      <FileInfo doc={doc} std={ready ? stdRef.current : null} store={store} />
       {status?.state === 'conflict' && <ConflictBar kind="document" id={documentId} />}
       {status?.state === 'error' && (
         <div className="flex items-center gap-2 border-b border-line bg-orange-500/10 px-3 py-1.5 text-xs text-[var(--rc-bad)]">

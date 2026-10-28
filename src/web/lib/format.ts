@@ -1,4 +1,4 @@
-import type { AnchorStatus, ClaimStatus, DocumentKind, RunStatus, Usage } from '@research';
+import type { AnchorStatus, ClaimStatus, DocumentKind, FileTextStatus, RunStatus, Usage } from '@research';
 
 export const KIND_LABEL: Record<DocumentKind, string> = {
   document: '研究文稿',
@@ -77,4 +77,39 @@ export function anchorTone(status: AnchorStatus | null | undefined) {
   if (status === 'changed' || status === 'ambiguous') return 'warn';
   if (status === 'missing') return 'bad';
   return 'muted';
+}
+
+/** 文件正文的读取状态（导入结果与项目目录条目共用）。 */
+export const TEXT_STATUS_LABEL: Record<FileTextStatus, string> = {
+  ready: '正文已读取',
+  partial: '部分读取',
+  image: '图像',
+  empty: '文字层为空',
+  attachment: '原始附件',
+  error: '读取失败',
+};
+
+export const TEXT_STATUS_NOTE: Record<FileTextStatus, string> = {
+  ready: '正文已读取',
+  partial: '部分内容已读取，附有解析说明',
+  image: '图像材料，可按图像读取',
+  empty: 'PDF 文字层为空，原页可打开',
+  attachment: '原件已保存，可下载后用对应应用打开',
+  error: '正文提取失败，原件已保留',
+};
+
+export function textStatusTone(status: FileTextStatus | 'directory' | null | undefined) {
+  if (status === 'error') return 'bad' as const;
+  if (status === 'partial' || status === 'empty') return 'warn' as const;
+  return 'muted' as const;
+}
+
+export function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unit]}`;
 }
