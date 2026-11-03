@@ -12,7 +12,12 @@ TARGETS = [
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("platforms", choices=["all", "macos"])
+    parser.add_argument("platforms", choices=["all", "macos", "desktop"])
     args = parser.parse_args()
-    targets = TARGETS if args.platforms == "all" else [target for target in TARGETS if target["platform"].startswith("macos-")]
+    if args.platforms == "all":
+        targets = TARGETS
+    elif args.platforms == "macos":
+        targets = [target for target in TARGETS if target["platform"].startswith("macos-")]
+    else:
+        targets = [target for target in TARGETS if target["platform"] in {"windows-x64", "macos-arm64"}]
     print("targets=" + json.dumps(targets, separators=(",", ":")))

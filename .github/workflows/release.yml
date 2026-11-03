@@ -6,8 +6,9 @@ on:
       platforms:
         description: 发行平台
         type: choice
-        default: macos
+        default: desktop
         options:
+          - desktop
           - macos
           - all
 
