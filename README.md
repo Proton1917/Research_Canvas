@@ -10,7 +10,7 @@ Research Canvas 是面向科研文稿、数学公式、无限画布和分支讨�
 
 从 [GitHub Releases](https://github.com/Proton1917/Research_Canvas/releases) 下载 Windows x64、macOS Apple Silicon、macOS Intel 或 Linux x64 发行包。完整解压后，Windows 双击 `start.cmd`，macOS 打开 `Start.command`，Linux 运行 `bash start.sh`，然后访问 `http://127.0.0.1:8787`。
 
-发行包包含编译后的程序和界面。各系统的安装步骤、PDF 工具、模型配置、数据迁移和故障处理见 [安装与使用指南](docs/installation.md)。
+macOS 0.1.2 发行包包含编译后的程序、界面及内置 PDF、Excel、PowerPoint 文字解析。各系统的安装步骤、模型配置、数据迁移和故障处理见 [安装与使用指南](docs/installation.md)。
 
 ## 构建与运行
 

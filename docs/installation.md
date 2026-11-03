@@ -1,6 +1,6 @@
 # Research Canvas 安装与使用
 
-Research Canvas 0.1.1 提供 macOS Apple Silicon 与 Intel 发行包，Windows 和 Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
+Research Canvas 0.1.2 提供 macOS Apple Silicon 与 Intel 发行包，Windows 和 Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
 
 ## 下载与选择
 
@@ -9,13 +9,13 @@ Research Canvas 0.1.1 提供 macOS Apple Silicon 与 Intel 发行包，Windows �
 | 系统 | 发行文件 | 启动入口 |
 | --- | --- | --- |
 | Windows 10/11，x64 | `research-canvas-0.1.0-windows-x64.zip` | `start.cmd` |
-| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.1-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
-| macOS 13 及以上，Intel | `research-canvas-0.1.1-macos-x64.zip` | `Start.command` 或 `bash start.sh` |
+| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.2-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
+| macOS 13 及以上，Intel | `research-canvas-0.1.2-macos-x64.zip` | `Start.command` 或 `bash start.sh` |
 | Linux x64，glibc 2.35 及以上 | `research-canvas-0.1.0-linux-x64.tar.gz` | `bash start.sh` |
 
 macOS 的处理器信息位于“苹果菜单 → 关于本机”；显示 Apple M 系列时选 arm64，显示 Intel 时选 x64。Windows 可在“设置 → 系统 → 系统信息”查看系统类型。Linux 可运行 `uname -m` 查看，`x86_64` 对应 x64。
 
-macOS 安装包位于 [0.1.1 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.1)，Windows 与 Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
+macOS 安装包位于 [0.1.2 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.2)，Windows 与 Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
 
 GitHub 页面附带的 `Source code` 是开发源码压缩包。直接使用应用时，下载上表对应的发行文件。
 
@@ -59,14 +59,7 @@ pdftotext -v
 
 本版本的便携程序未做 Apple 公证。首次运行被系统拦截时，确认文件来自本仓库后，在“系统设置 → 隐私与安全性”中按提示允许该程序运行。
 
-PDF 导入需要 Poppler。已有 Homebrew 时执行：
-
-```bash
-brew install poppler
-pdftotext -v
-```
-
-Homebrew 的安装入口为 [brew.sh](https://brew.sh/)。安装 Poppler 后重新启动 Research Canvas。
+macOS 0.1.2 通过程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。导入项目文件夹可保留相对路径和空目录，同时支持普通多文件导入。扫描 PDF 可先通过 OCR 获得文字层。
 
 ## Linux
 
@@ -92,7 +85,7 @@ Fedora 可使用 `sudo dnf install poppler-utils`。其他发行版从系统软�
 
 ## 首次使用与模型连接
 
-进入页面后，新建工作区，导入 Markdown、文本、图片或 PDF，将文稿和片段放入画布。模型服务尚未接通时，文稿编辑、画布组织、保存和导出仍可使用。PDF 导入依赖前述 Poppler。
+进入页面后，新建工作区，导入项目文件夹、Markdown、Notebook、Office、文本、图片或 PDF，将文稿和片段放入画布。文稿编辑、画布组织、保存和导出在本机完成，AI 讨论通过配置的模型服务运行。macOS 0.1.2 使用内置文字解析，Windows 和 Linux 的 0.1.0 包按对应章节安装 PDF 工具。
 
 发行包默认配置连接本机 Router OAuth 服务：
 
@@ -135,7 +128,7 @@ bash start.sh
 | --- | --- |
 | 本机服务配置 | `config/server.toml` |
 | 工作区、文稿、PDF、版本及讨论 | `.runtime/data/research-canvas.sqlite3` |
-| 临时 PDF 提取目录 | `tmp/backend/` |
+| 运行临时目录 | `tmp/backend/` |
 | 模型提示词 | `config/prompts/` |
 
 升级前保存一份当前工作区的 JSON 或 ZIP 可恢复归档；已有适用归档时可复用。停止旧版服务，将新版完整解压到新目录，再复制旧目录的 `config/server.toml` 和 `.runtime/data/`。数据目录中的 SQLite 文件应在服务停止后整体复制。新版本启动时执行数据库迁移，确认工作区和文稿可读取后，再处理旧目录。
@@ -159,7 +152,7 @@ max_input_image_bytes = 20971520
 | 页面无法连接 | 确认启动窗口仍在运行，查看其中的启动地址及错误信息。 |
 | 提示端口被占用 | 停止占用 8787 的旧实例；或修改 `config/server.toml` 的 `port`，并同步修改 `allowed_origins` 中对应的页面地址。 |
 | 找不到配置或界面 | 保留完整解压目录并通过其中的启动脚本运行；程序需要同目录的 `config/` 与 `dist/`。 |
-| PDF 导入提示缺少工具 | 安装 Poppler，确认 `pdftotext -v` 可执行，然后重启服务。 |
+| Windows/Linux 0.1.0 的 PDF 导入提示缺少工具 | 安装 Poppler，确认 `pdftotext -v` 可执行，然后重启服务。 |
 | 扫描 PDF 没有文本 | 当前导入提取已有文字层；扫描件需先通过 OCR 获得文字层。 |
 | 模型目录或生成失败 | 检查模型服务是否启动、OAuth 是否有效、接口协议、模型允许列表及所需环境变量。 |
 | 保存或提案返回版本冲突 | 保留本地编辑，读取当前服务端版本后按界面提示处理冲突。 |
