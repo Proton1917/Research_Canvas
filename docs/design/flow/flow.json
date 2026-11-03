@@ -921,6 +921,83 @@
       "evidence": "observed",
       "state": "从 Finder 把 research-inputs 拖到导入区：页面收到 Files 拖放，预览含 11 个目录与 2 个空目录，node_modules 默认跳过；导入 15 个文件，服务端路径与字节数和磁盘一致",
       "evidenceNote": "2026-10-28 在 8802（常规上限）与 8803（max_request_bytes = 524288）空数据库实例上实测，后端含 change_kind 与 413；i1–i3 由 Playwright 驱动 Chrome 并记录每次文稿保存的 change_kind，i4 为 macOS Finder 到可见 Chrome 的系统拖放。首次拖放发现预览被重置的缺陷，修复后复测。"
+    },
+    {
+      "id": "canvas_overview",
+      "title": "画布全景",
+      "image": "screenshots/canvas_overview-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "三栏布局：48px 顶栏、256px 导航、392px 研究面板；中央为文稿卡片、想法、讨论卡片与连线，底部绘图工具栏。首次查看显示全部内容，20/20 对象在视野内",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "viewport_restore",
+      "title": "视口恢复",
+      "image": "screenshots/viewport_restore-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "缩放到 0.6163 并平移后，切换到另一张画布再返回、刷新，均恢复同一缩放与中心；画布区域与移动后逐像素一致。卡片正文显示 Markdown 标题、列表与公式",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。视口按工作区和画布保存在 rc:viewport:<workspace_id>:<canvas_id>。"
+    },
+    {
+      "id": "fit_all",
+      "title": "显示全部内容",
+      "image": "screenshots/fit_all-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "点击“显示全部内容”后全部 20 个对象进入视野，保存的视口随之更新",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "card_actions",
+      "title": "选中卡片的操作",
+      "image": "screenshots/card_actions-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "选中文稿卡片：操作行显示向 AI 提问、展开编辑、打开精读、作为讨论材料；行高保持 40px，卡片位置不变",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "relation_actions",
+      "title": "选中关系连线",
+      "image": "screenshots/relation_actions-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "选中绑定研究关系的连线：操作行显示向 AI 提问、研究这个联系、在本画布隐藏；“研究这个联系”打开学科桥卡，行高保持 40px",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "link_actions",
+      "title": "选中纯视觉连线",
+      "image": "screenshots/link_actions-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "用连线工具在两张卡片之间画线后选中：操作行显示纯视觉连线标记与“研究这个联系”，点击后展开一句说明与“建立候选联系”，取消后复原",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "canvas_narrow",
+      "title": "窄屏画布",
+      "image": "screenshots/canvas_narrow-image-0.png",
+      "group": "画布",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "390×844：侧栏收起、无横向滚动，画布入口可见；恢复与桌面相同的保存视口；选中卡片后操作行保持 40px 并可横向滚动",
+      "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
     }
   ],
   "edges": [
@@ -1523,6 +1600,51 @@
       "from": "finder_drop",
       "to": "project_tree",
       "action": "开始导入，展开项目目录",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "canvas_overview",
+      "action": "打开画布",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_overview",
+      "to": "viewport_restore",
+      "action": "缩放平移 → 切换画布再返回 → 刷新",
+      "evidence": "observed"
+    },
+    {
+      "from": "viewport_restore",
+      "to": "fit_all",
+      "action": "点击显示全部内容",
+      "evidence": "observed"
+    },
+    {
+      "from": "fit_all",
+      "to": "card_actions",
+      "action": "点击文稿卡片",
+      "evidence": "observed",
+      "back": "Esc"
+    },
+    {
+      "from": "fit_all",
+      "to": "relation_actions",
+      "action": "点击关系连线 → 研究这个联系",
+      "evidence": "observed",
+      "back": "关闭学科桥"
+    },
+    {
+      "from": "fit_all",
+      "to": "link_actions",
+      "action": "画线并选中 → 研究这个联系",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "canvas_overview",
+      "to": "canvas_narrow",
+      "action": "390px 窄屏",
       "evidence": "observed"
     }
   ],
