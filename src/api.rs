@@ -14,7 +14,8 @@ pub struct NameInput { pub name: String }
 
 pub async fn health(State(state): State<AppState>) -> Result<Json<Value>> {
     state.db.call(|connection| { connection.query_row("SELECT 1", [], |_| Ok(()))?; Ok(()) }).await?;
-    Ok(Json(json!({"service":"research-canvas", "api_version":2, "database":"ready", "provider_configured":state.config.credentials_available(), "default_model":state.config.provider.default_model})))
+    let runtime = state.provider.read().await.clone();
+    Ok(Json(json!({"service":"research-canvas", "api_version":2, "database":"ready", "provider_configured":runtime.credentials_available(), "default_model":runtime.provider.default_model})))
 }
 
 pub async fn list_workspaces(State(state): State<AppState>) -> Result<Json<Vec<Workspace>>> {

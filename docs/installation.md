@@ -120,6 +120,8 @@ bash start.sh
 
 升级前保存一份当前工作区的 JSON 或 ZIP 可恢复归档；已有适用归档时可复用。停止旧版服务，将新版完整解压到新目录，再复制旧目录的 `config/server.toml` 和 `.runtime/data/`。数据目录中的 SQLite 文件应在服务停止后整体复制。新版本启动时执行数据库迁移，确认工作区和文稿可读取后，再处理旧目录。
 
+通过模型设置接口保存过配置时，将 `config/server.local.toml` 一并迁移。该文件保存模型服务设置与密钥，并在启动时覆盖初始 provider 配置。自定义 `RC_CONFIG` 对应同目录下同名的 `.local.toml` 文件。
+
 从 0.1.0 升级并使用图像输入时，将新版 `config/server.example.toml` 中的输入设置补入旧配置的 `[provider]`。本机 Router 示例为：
 
 ```toml

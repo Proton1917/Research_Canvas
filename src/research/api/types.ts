@@ -340,6 +340,45 @@ export type ModelCatalog = {
   [key: string]: unknown;
 };
 
+export type ProviderProtocol = 'chat_completions' | 'anthropic_messages';
+
+export type ProviderConnection = {
+  protocol: ProviderProtocol;
+  base_url: string;
+  api_key?: string;
+  headers?: Record<string, string>;
+};
+
+export type ProviderSettings = {
+  revision: number;
+  protocol: ProviderProtocol;
+  base_url: string;
+  default_model: string;
+  allowed_models: string[];
+  vision_models: string[];
+  api_key_configured: boolean;
+  credential_source: 'saved' | 'environment' | 'headers' | 'none';
+  header_names: string[];
+  request_timeout_seconds: number;
+  max_output_tokens: number;
+  max_input_characters: number | null;
+  max_input_image_bytes: number | null;
+};
+
+export type ProviderSettingsUpdate = ProviderConnection & {
+  expected_revision: number;
+  default_model: string;
+  allowed_models?: string[];
+  vision_models?: string[];
+};
+
+export type ProviderConnectionTest = {
+  connected: boolean;
+  models: ModelEntry[];
+  model: string | null;
+  model_available: boolean | null;
+};
+
 /**
  * `GET /api/capabilities` 的能力声明（docs/canvas-collaboration.md 的建议契约）。
  * 服务返回 404 时表示相应能力尚未接通，前端据此显示缺项；字段以 docs/api.md 实际记录为准。

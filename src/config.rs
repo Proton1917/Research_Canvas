@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
 #[derive(Clone, Deserialize)]
@@ -20,11 +20,12 @@ pub struct Config {
 fn project_page_size() -> usize { 200 }
 fn archive_bytes() -> usize { 268_435_456 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Provider {
     pub protocol: Protocol,
     pub base_url: String,
     pub api_key_environment: Option<String>,
+    pub api_key: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
     pub default_model: String,
@@ -37,7 +38,7 @@ pub struct Provider {
     pub models_cache_seconds: u64,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     ChatCompletions,
@@ -51,22 +52,15 @@ impl Config {
         for mode in ["discussion", "rewrite", "relation"] {
             if !config.prompts.contains_key(mode) { return Err(format!("缺少提示词配置：{mode}").into()); }
         }
-        if !config.provider.allowed_models.contains(&config.provider.default_model) {
-            return Err("默认模型需要包含在允许的模型列表中".into());
-        }
-        for (name, value) in &config.provider.headers {
-            reqwest::header::HeaderName::from_bytes(name.as_bytes())?;
-            reqwest::header::HeaderValue::from_str(value)?;
-        }
         if let Some(parent) = Path::new(&config.database).parent() { std::fs::create_dir_all(parent)?; }
         Ok(config)
     }
 
-    pub fn api_key(&self) -> Option<String> {
-        self.provider.api_key_environment.as_ref().and_then(|name| std::env::var(name).ok()).filter(|key| !key.trim().is_empty())
-    }
+}
 
-    pub fn credentials_available(&self) -> bool {
-        self.provider.api_key_environment.is_none() || self.api_key().is_some()
+impl Provider {
+    pub fn api_key(&self) -> Option<String> {
+        self.api_key.clone().or_else(|| self.api_key_environment.as_ref().and_then(|name| std::env::var(name).ok()))
+            .filter(|key| !key.trim().is_empty())
     }
 }

@@ -15,6 +15,7 @@ dist/
 AGENTS.md
 /docs/frontend-handoff.md
 /config/server.toml
+/config/server.local.toml
 .env.*
 !.env.example
 *.sqlite

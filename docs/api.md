@@ -18,6 +18,61 @@
 
 状态码包括 404（记录缺失）、409（版本冲突）、422（业务输入无效）、502（模型服务失败）和 503（模型配置缺失）。表单提交失败时保留用户输入，显示服务返回的信息。重试由用户触发。
 
+## 模型服务设置
+
+设置面向运行该应用的本机用户，沿用本地服务的 Origin 约定。客户端方法位于 `src/research/api/client.ts`，对应类型位于 `types.ts`。
+
+| 方法与路径 | 客户端方法 | 行为 |
+| --- | --- | --- |
+| `GET /settings/provider` | `api.providerSettings()` | 读取当前配置及修订号，凭据以状态字段呈现 |
+| `POST /settings/provider/test` | `api.testProviderConnection(input)` | 使用表单配置读取上游 `/models`，返回候选目录和所选模型的存在状态 |
+| `PUT /settings/provider` | `api.saveProviderSettings(input)` | 保存配置并立即应用，后续模型请求使用新配置 |
+
+读取结果提供 `revision`、`protocol`、`base_url`、`default_model`、`allowed_models`、`vision_models`、`api_key_configured`、`credential_source`、`header_names` 及输入输出限制。`credential_source` 为 `saved`、`environment`、`headers` 或 `none`。密钥及自定义请求头的取值保存在服务端，响应展示密钥配置状态和请求头名称。
+
+连接测试接收如下结构，其中 `api_key`、`headers` 和 `model` 为可选字段。
+
+```typescript
+type ProviderConnection = {
+  protocol: 'chat_completions' | 'anthropic_messages';
+  base_url: string;
+  api_key?: string;
+  headers?: Record<string, string>;
+};
+type ConnectionTestInput = ProviderConnection & { model?: string };
+type ConnectionTestResult = {
+  connected: boolean;
+  models: ModelEntry[];
+  model: string | null;
+  model_available: boolean | null;
+};
+```
+
+`base_url` 使用 HTTP 或 HTTPS 基础地址及路径，例如本机 Router 的 `http://127.0.0.1:43177/v1`。Chat Completions 请求追加 `/chat/completions`，Anthropic Messages 请求追加 `/messages`。密钥分别通过 Bearer Authorization 和 `x-api-key` 发送，Messages 请求带 `anthropic-version`。自定义请求头支持网关的额外参数。
+
+`api_key` 省略时，同一地址和协议沿用已配置凭据。空字符串清除密钥及对应环境变量引用、认证请求头。非空字符串替换密钥，并按所选协议生成认证请求头。地址或协议变化时，认证来自本次输入。`headers` 省略时沿用同一连接的自定义头，提供对象时替换整组自定义头，同时提供 `api_key` 时由密钥字段确定认证头。
+
+连接测试读取候选配置的模型目录，当前已保存配置保持独立。`connected: true` 表示取得了目录，`model_available` 表示指定模型是否在该目录中，省略 `model` 时为 null。此操作验证接口、认证和目录读取，实际模型生成通过运行接口执行。请求失败返回 502 `provider_error`，配置语法错误返回 422，凭据环境变量缺失返回 503。
+
+保存输入在 `ProviderConnection` 基础上增加以下字段。
+
+```typescript
+type ProviderSettingsUpdate = ProviderConnection & {
+  expected_revision: number;
+  default_model: string;
+  allowed_models?: string[];
+  vision_models?: string[];
+};
+```
+
+默认模型自动加入启用列表，`vision_models` 由用户指定支持图像的模型。保存成功返回新的读取结果。修订号过期返回 409 `settings_conflict`，`details.current_revision` 提供当前修订号。前端保留表单，并由用户选择载入当前设置或按新修订号再次保存。
+
+保存操作独立于连接测试，上游暂时离线时也可保存配置。服务在持久化成功后切换模型客户端和目录缓存，新请求立即采用新配置。正在进行的模型运行持有启动时的配置快照，并按该协议接收流式回答。保存后，前端重新取得 `/health`、`/models` 和 `/capabilities`，更新默认模型、启用列表和图像能力。
+
+初始配置来自 `RC_CONFIG` 指定文件，缺省为 `config/server.toml`。设置保存在同目录、以 `.local.toml` 结尾的文件，缺省为 `config/server.local.toml`。启动时该文件中的完整 provider 配置覆盖初始 provider。文件通过临时文件原子替换，Unix 权限为 0600，Windows 继承应用目录的访问权限。保存的是本机配置文件中的密钥文本，工作区归档继续保存研究数据。
+
+2026-11-03 执行 `conda run --no-capture-output -n base python tests/provider_settings_acceptance.py`，使用独立数据库及实际 Router OAuth `cc/gemini-3.8-flash-high`。验证覆盖草稿连接测试、保存与重启恢复、修订号冲突、离线错误、目录缓存切换、密钥沿用与清除、归档中的凭据隔离。Chat Completions 运行创建后切换至 Messages，前后两个运行均成功生成带来源引用的回答，返回模型为 `gemini-3.8-flash-n`。结果保存在 `.runtime/provider-settings/result.json`。协议调用的本轮验证范围为该 Router 通道。
+
 ## 文稿与版本
 
 `Content` 包含：

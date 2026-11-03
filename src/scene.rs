@@ -100,7 +100,8 @@ pub enum SceneRequest {
 }
 
 pub async fn capabilities(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({"scene_context":1,"frozen_inheritance":true,"canvas_proposals":if state.config.prompts.contains_key("canvas") { 2 } else { 0 },"canvas_proposal_recovery":1,"claim_reviews":1,"claim_research_plan":1,"relation_endpoints":1,"canvas_proposal_materialization":1,"context_freshness":1,"optional_canvas_actions":1,"max_input_characters":state.config.provider.max_input_characters,"visual_inputs":1,"vision_models":state.config.provider.vision_models,"max_input_image_bytes":state.config.provider.max_input_image_bytes,"api_version":2}))
+    let runtime = state.provider.read().await.clone();
+    Json(json!({"scene_context":1,"frozen_inheritance":true,"canvas_proposals":if state.config.prompts.contains_key("canvas") { 2 } else { 0 },"canvas_proposal_recovery":1,"claim_reviews":1,"claim_research_plan":1,"relation_endpoints":1,"canvas_proposal_materialization":1,"context_freshness":1,"optional_canvas_actions":1,"max_input_characters":runtime.provider.max_input_characters,"visual_inputs":1,"vision_models":runtime.provider.vision_models,"max_input_image_bytes":runtime.provider.max_input_image_bytes,"api_version":2}))
 }
 
 pub async fn api_not_found() -> ApiError { ApiError::missing("API 路径") }

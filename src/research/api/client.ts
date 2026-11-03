@@ -3,6 +3,7 @@ import type {
   DocumentMetadata, DocumentVersion, Health, ImportResult, ModelCatalog, Proposal, ProposalResult, Relation,
   RelationInput, ResearchContext, ResearchDocument, Run, RunProgress, RunPlacementResult, Bounds, VisualAsset, SearchHit, Workspace, WorkspaceSummary,
   Project, ProjectSummary, ProjectTree, ProjectImportResult, ImportCapabilities,
+  ProviderSettings, ProviderSettingsUpdate, ProviderConnection, ProviderConnectionTest,
 } from './types';
 import { TERMINAL_RUN_STATUSES } from './types';
 
@@ -70,6 +71,9 @@ export const api = {
     }
   },
   models: () => request<ModelCatalog>('/models'),
+  providerSettings: () => request<ProviderSettings>('/settings/provider'),
+  saveProviderSettings: (input: ProviderSettingsUpdate) => request<ProviderSettings>('/settings/provider', { method: 'PUT', json: input }),
+  testProviderConnection: (input: ProviderConnection & { model?: string }) => request<ProviderConnectionTest>('/settings/provider/test', { method: 'POST', json: input }),
 
   listWorkspaces: () => request<Workspace[]>('/workspaces'),
   createWorkspace: (name: string) => request<Workspace>('/workspaces', { method: 'POST', json: { name } }),

@@ -13,6 +13,7 @@ mod model;
 mod office_import;
 mod math_text;
 mod provider;
+mod settings;
 mod projects;
 mod research;
 mod run_placement;
@@ -22,10 +23,9 @@ mod transfer;
 mod visual;
 mod visual_assets;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::{Duration, Instant}};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use axum::{Router, extract::{DefaultBodyLimit, Request, State}, http::{HeaderValue, Method, header}, middleware::{self, Next}, response::Response, routing::{get, post}};
-use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio_util::sync::CancellationToken;
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}, trace::TraceLayer};
@@ -42,9 +42,9 @@ struct RunControl {
 struct AppState {
     config: Arc<Config>,
     db: Db,
-    client: reqwest::Client,
+    provider: Arc<RwLock<Arc<settings::ProviderRuntime>>>,
+    provider_path: Arc<PathBuf>,
     runs: Arc<Mutex<HashMap<String, RunControl>>>,
-    models: Arc<RwLock<Option<(Instant, Value)>>>,
     tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     shutdown: CancellationToken,
 }
@@ -66,18 +66,22 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if env_file.exists() { dotenvy::from_path(env_file)?; }
     let config_path = std::env::var_os("RC_CONFIG").map(PathBuf::from).unwrap_or_else(|| "config/server.toml".into());
     let config = Config::load(&config_path)?;
+    let provider_path = std::env::current_dir()?.join(config_path.with_extension("local.toml"));
+    let provider = settings::load(&provider_path, config.provider.clone())?;
     let address = format!("{}:{}", config.host, config.port);
     let origins = config.allowed_origins.iter().map(|origin| origin.parse::<HeaderValue>()).collect::<std::result::Result<Vec<_>, _>>()?;
     let static_files = ServeDir::new(&config.frontend_directory).not_found_service(ServeFile::new(PathBuf::from(&config.frontend_directory).join("index.html")));
     let state = AppState {
         db: Db::open(&config.database)?,
-        client: reqwest::Client::builder().timeout(Duration::from_secs(config.provider.request_timeout_seconds)).connect_timeout(Duration::from_secs(15)).build()?,
-        config: Arc::new(config), runs: Arc::new(Mutex::new(HashMap::new())), models: Arc::new(RwLock::new(None)), tasks: Arc::new(Mutex::new(Vec::new())), shutdown: CancellationToken::new(),
+        provider: Arc::new(RwLock::new(Arc::new(provider))), provider_path: Arc::new(provider_path),
+        config: Arc::new(config), runs: Arc::new(Mutex::new(HashMap::new())), tasks: Arc::new(Mutex::new(Vec::new())), shutdown: CancellationToken::new(),
     };
     let routes = Router::new()
         .route("/health", get(api::health))
         .route("/capabilities", get(scene::capabilities))
         .route("/models", get(provider::models))
+        .route("/settings/provider", get(settings::read).put(settings::save))
+        .route("/settings/provider/test", post(settings::test))
         .route("/workspaces", get(api::list_workspaces).post(api::create_workspace))
         .route("/workspaces/import", post(transfer::import_archive).layer(DefaultBodyLimit::max(state.config.max_archive_bytes)))
         .route("/workspaces/{id}", get(api::get_workspace).patch(api::rename_workspace))
