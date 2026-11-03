@@ -173,6 +173,37 @@ function writeLocal(key: string, value: string | null) {
   }
 }
 
+/** 画布视口：按工作区和画布记录浏览器本地的缩放与中心位置，与画布对象布局分开管理。 */
+export type CanvasViewport = { zoom: number; center: [number, number] };
+const viewports = new Map<string, CanvasViewport>();
+const viewportKey = (workspaceId: string, canvasId: string) => `rc:viewport:${workspaceId}:${canvasId}`;
+
+export function readCanvasViewport(workspaceId: string, canvasId: string): CanvasViewport | null {
+  const key = viewportKey(workspaceId, canvasId);
+  const cached = viewports.get(key);
+  if (cached) return cached;
+  try {
+    const raw = readLocal(key);
+    const value = raw ? (JSON.parse(raw) as Partial<CanvasViewport>) : null;
+    const center = value?.center;
+    if (!value || !(typeof value.zoom === 'number' && value.zoom > 0 && Number.isFinite(value.zoom))) return null;
+    if (!Array.isArray(center) || center.length !== 2 || !center.every(Number.isFinite)) return null;
+    const viewport: CanvasViewport = { zoom: value.zoom, center: [center[0], center[1]] };
+    viewports.set(key, viewport);
+    return viewport;
+  } catch {
+    return null;
+  }
+}
+
+/** 更新内存中的当前视口；persist 时合并写入本地存储。 */
+export function rememberCanvasViewport(workspaceId: string, canvasId: string, viewport: CanvasViewport | null, persist = false) {
+  const key = viewportKey(workspaceId, canvasId);
+  if (viewport) viewports.set(key, viewport);
+  const current = viewports.get(key);
+  if (persist && current) writeLocal(key, JSON.stringify({ zoom: current.zoom, center: current.center }));
+}
+
 const emptyComposer: Composer = { mode: 'discussion', question: '', documentIds: [], anchorIds: [], parents: [], inherit: 'discussion', preview: null, previewKey: null, busy: null, error: null };
 
 export const app = createStore<AppState>({

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addMaterialDocument, app, createAnchor, createDocument, createRelation, discussInPlace, documentMap, errorText, getSession, loadDocument,
   hideRelationOnCanvas, importFiles, openAsk, openBridge, openDocument, placeFragment, registerCanvasActions, relateConnector,
-  renameCanvas, setCanvasSelection, setSceneIds, setTab, toast, useApp,
+  readCanvasViewport, rememberCanvasViewport, renameCanvas, setCanvasSelection, setSceneIds, setTab, toast, useApp, type CanvasViewport,
 } from '../app/model';
 import { buildMaterials } from '../app/materials';
 import { useSession } from '../app/useSession';
@@ -39,6 +39,8 @@ type Gfx = {
     setViewport(zoom: number, center: [number, number], smooth?: boolean): void;
     width: number; height: number;
     viewportUpdated: Subscribable;
+    /** 容器尺寸变化完成后触发 */
+    sizeUpdated: Subscribable;
   };
   selection: { selectedIds: string[]; slots: { updated: Subscribable }; set(selection: { elements: string[]; editing: boolean }): void };
   fitToScreen(options?: { smooth?: boolean; padding?: [number, number, number, number] }): void;
@@ -232,7 +234,7 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
     return { x, y, ...size };
   }, [store]);
 
-  /** 选中对象并把视口移到其范围；编辑器刚挂载时等待其就绪，并排在挂载时的“显示全部”之后。 */
+  /** 选中对象并把视口移到其范围；编辑器刚挂载时等待其就绪，并排在挂载时的视口恢复之后。 */
   const focus = useCallback((ids: string[]) => {
     const apply = (tries: number) => {
       const gfx = gfxRef.current;
@@ -276,17 +278,55 @@ export function CanvasView({ canvasId }: { canvasId: string }) {
       setCanvasSelection(null);
     };
     const subscription = gfx.selection.slots.updated.subscribe(update);
+    // 视口按工作区和画布记忆：内存中随时更新，操作停止片刻、离开画布或页面隐藏时写入本地存储
+    const workspaceId = app.get().summary?.workspace.id ?? null;
+    const current = (): CanvasViewport => ({ zoom: gfx.viewport.zoom, center: [gfx.viewport.centerX, gfx.viewport.centerY] });
+    let tracking = false;
+    let persistTimer = 0;
+    // 恢复的视口在用户操作或其他聚焦之前保持中心：布局随后变化（提示条出现、侧栏切换）时重新对齐
+    let pinned: CanvasViewport | null = null;
+    let applying = false;
+    let size = [gfx.viewport.width, gfx.viewport.height];
+    const apply = (target: CanvasViewport) => {
+      applying = true;
+      try { gfx.viewport.setViewport(target.zoom, target.center); } finally { applying = false; }
+    };
+    const persist = () => {
+      window.clearTimeout(persistTimer);
+      if (tracking && workspaceId) rememberCanvasViewport(workspaceId, canvasId, null, true);
+    };
     // 视口变化时重新计算浮层位置（世界坐标 → 视图坐标）
     let frame = 0;
     const viewport = gfx.viewport.viewportUpdated.subscribe(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => setViewTick(value => value + 1));
+      const resized = gfx.viewport.width !== size[0] || gfx.viewport.height !== size[1];
+      if (resized) size = [gfx.viewport.width, gfx.viewport.height];
+      else if (!applying) pinned = null;
+      if (!tracking || !workspaceId) return;
+      rememberCanvasViewport(workspaceId, canvasId, current());
+      window.clearTimeout(persistTimer);
+      persistTimer = window.setTimeout(persist, 400);
     });
-    const s = getSession();
-    if (s && s.canvasObjects(canvasId).length > 0) {
-      requestAnimationFrame(() => gfx.fitToScreen({ padding: [80, 80, 80, 80] }));
-    }
-    return () => { subscription.unsubscribe(); viewport.unsubscribe(); cancelAnimationFrame(frame); setSceneIds([]); };
+    const resize = gfx.viewport.sizeUpdated.subscribe(() => { if (pinned) apply(pinned); });
+    const onHidden = () => { if (document.visibilityState === 'hidden') persist(); };
+    window.addEventListener('pagehide', persist);
+    document.addEventListener('visibilitychange', onHidden);
+    // 恢复上次视口；首次查看沿用显示全部内容的初始定位
+    const start = requestAnimationFrame(() => {
+      const saved = workspaceId ? readCanvasViewport(workspaceId, canvasId) : null;
+      if (saved) { pinned = saved; apply(saved); }
+      else if (getSession()?.canvasObjects(canvasId).length) gfx.fitToScreen({ padding: [80, 80, 80, 80] });
+      tracking = true;
+      if (workspaceId) rememberCanvasViewport(workspaceId, canvasId, current());
+    });
+    return () => {
+      cancelAnimationFrame(start);
+      persist();
+      window.removeEventListener('pagehide', persist);
+      document.removeEventListener('visibilitychange', onHidden);
+      subscription.unsubscribe(); viewport.unsubscribe(); resize.unsubscribe(); cancelAnimationFrame(frame); setSceneIds([]);
+    };
   }, [canvasId, cardDocument]);
 
   const onDrop = useCallback((event: DragEvent) => {
