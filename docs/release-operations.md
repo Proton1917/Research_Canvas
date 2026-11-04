@@ -2,9 +2,11 @@
 
 发行目标为 Windows x64、macOS Apple Silicon 与 Linux x64。GitHub Actions 的 `.github/workflows/release.yml` 使用 `platforms=desktop` 构建 Windows 与 macOS ARM64，使用 `platforms=linux` 单独构建 Linux x64。下载镜像提供安装包，Research Canvas 在用户本机运行。
 
-产品网站为 `https://mathana.homes/`，`#download` 提供下载入口，`#ai` 提供模型接入说明。页面源码位于 `site/index.html`，直接发布到 `/var/www/mathana-canvas/index.html`。该页面为独立静态 HTML，沿用内嵌样式与脚本。发行时同步首页、下载文件名、大小、链接、页脚源码提交和与产品版本相关的接入说明，并查看真实渲染及下载结果。
+产品网站为 `https://mathana.homes/`，`#download` 提供下载入口，`#ai` 提供模型接入说明。页面源码位于 `site/index.html`，直接发布到 `/var/www/mathana-canvas/index.html`。该页面为独立静态 HTML，沿用内嵌样式与脚本。发行时同步首页、下载文件名、大小、链接、页脚版本与平台和接入说明，并查看真实渲染及下载结果。
 
 2026-11-04 的 0.1.4 页面验收通过 Safari 查看桌面下载区与接入说明，以及 390 × 844 响应式视口。地址复制操作显示成功，窄屏 API 地址完整换行。页面脚本通过 `node --check`。从 `mathana.homes` 完整下载 Windows 和 macOS 安装包后，大小与传输摘要均与 GitHub 发行资产一致。截图及传输记录保存在 `tmp/mathana-release/`。
+
+Linux x64 的 0.1.4 补充发行构建自 `5031f25870a09ccb6116843856870158f9e837fd`，在 Ubuntu 22.04 / glibc 2.35 的原生工作流 `41835034509` 中完成构建、测试与 10 项解压安装检查。包大小为 21,751,479 字节，公网下载与上传产物的传输校验通过。记录在 `.runtime/releases/v0.1.4/linux-x64/`，网站下载区截图为 `tmp/mathana-release/linux-download.png`，由内置浏览器查看。
 
 ## 构建与发行
 
@@ -32,11 +34,11 @@
 ## 上传与启用
 
 1. 读取服务器当前下载片段与站点配置，确认 include 位置和当前公开版本。复用本地或暂存目录中的适用配置原件；确需新副本时，按项目备份约定核对并轮换，最多保留两份有效恢复副本。
-2. 使用相同 SSH 选项将本次两个 ZIP 上传到本次暂存目录。跨设备传输核对本地与远端文件的字节数和 SHA-256，摘要范围为本次传输文件。
-3. 用 `sudo -n install -d` 建立本次公网版本目录，`sudo -n install -m 0644` 放入两个已核对的 ZIP。相同版本路径对应同一发行内容，修订发行内容使用新版本路径。
-4. 根据服务器当前片段，在项目目录用文件编辑工具生成修改件，保留此前公开版本，追加本次两个精确 URL。上传修改件后以 `sudo -n install -m 0644` 安装片段。
+2. 使用相同 SSH 选项将本次目标平台的 ZIP 或 tar.gz 上传到本次暂存目录。跨设备传输核对本地与远端文件的字节数和 SHA-256，摘要范围为本次传输文件。
+3. 用 `sudo -n install -d` 建立本次公网版本目录，`sudo -n install -m 0644` 放入已核对的安装包。相同版本路径对应同一发行内容，修订发行内容使用新版本路径。
+4. 根据服务器当前片段，在项目目录用文件编辑工具生成修改件，保留此前公开版本，追加本次平台的精确 URL。上传修改件后以 `sudo -n install -m 0644` 安装片段。
 5. 执行 `sudo -n nginx -t`，通过后执行 `sudo -n systemctl reload nginx`。核对 `nginx`、`mia-m1.service` 状态及现有网站 `/api/health`。
-6. 从公网完整下载两个 URL 至项目目录，与上传文件按字节数和 SHA-256 核对。将 HTTP 响应头、目标 URL 和传输核对结果保存在本地操作材料目录。公布该版本的两个下载链接。
+6. 从公网完整下载本次平台的 URL 至项目目录，与上传文件按字节数和 SHA-256 核对。将 HTTP 响应头、目标 URL 和传输核对结果保存在本地操作材料目录。公布对应下载链接。
 
 下载片段的现用格式如下，版本与文件名采用本次发行值。
 
@@ -49,6 +51,13 @@ location = /downloads/research-canvas/0.1.3/research-canvas-0.1.3-windows-x64.zi
 }
 
 location = /downloads/research-canvas/0.1.3/research-canvas-0.1.3-macos-arm64.zip {
+    root /var/www/matharc-resolve;
+    types { }
+    default_type application/octet-stream;
+    try_files $uri =404;
+}
+
+location = /downloads/research-canvas/0.1.4/research-canvas-0.1.4-linux-x64.tar.gz {
     root /var/www/matharc-resolve;
     types { }
     default_type application/octet-stream;
