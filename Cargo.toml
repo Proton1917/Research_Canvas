@@ -1,6 +1,6 @@
 [package]
 name = "research-canvas"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MPL-2.0"
 repository = "https://github.com/Proton1917/Research_Canvas"

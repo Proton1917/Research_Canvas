@@ -1,6 +1,6 @@
 # Research Canvas 安装与使用
 
-Research Canvas 0.1.3 提供 Windows x64 与 macOS Apple Silicon 发行包，Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
+Research Canvas 0.1.4 提供 Windows x64 与 macOS Apple Silicon 发行包，Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
 
 ## 下载与选择
 
@@ -8,13 +8,13 @@ Research Canvas 0.1.3 提供 Windows x64 与 macOS Apple Silicon 发行包，Lin
 
 | 系统 | 发行文件 | 启动入口 |
 | --- | --- | --- |
-| Windows 10/11，x64 | `research-canvas-0.1.3-windows-x64.zip` | `start.cmd` |
-| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.3-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
+| Windows 10/11，x64 | `research-canvas-0.1.4-windows-x64.zip` | `start.cmd` |
+| macOS 13 及以上，Apple Silicon | `research-canvas-0.1.4-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
 | Linux x64，glibc 2.35 及以上 | `research-canvas-0.1.0-linux-x64.tar.gz` | `bash start.sh` |
 
 macOS 的处理器信息位于“苹果菜单 → 关于本机”，Apple M 系列选择 arm64。Windows 可在“设置 → 系统 → 系统信息”查看系统类型。Linux 可运行 `uname -m` 查看，`x86_64` 对应 x64。
 
-Windows 与 macOS 安装包位于 [0.1.3 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.3)，Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
+Windows 与 macOS 安装包位于 [0.1.4 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.4)，Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
 
 GitHub 页面附带的 `Source code` 是开发源码压缩包。直接使用应用时，下载上表对应的发行文件。
 
@@ -35,7 +35,7 @@ GitHub 页面附带的 `Source code` 是开发源码压缩包。直接使用应�
 
 ### Windows 文稿导入
 
-Windows 0.1.3 通过程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。文件夹导入保留项目目录和原件，普通文件导入支持多选。
+Windows 0.1.4 通过程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。文件夹导入保留项目目录和原件，普通文件导入支持多选。
 
 ## macOS
 
@@ -46,7 +46,7 @@ Windows 0.1.3 通过程序内置解析库读取 PDF 文字层、Excel 工作表�
 
 本版本的便携程序未做 Apple 公证。首次运行被系统拦截时，确认文件来自本仓库后，在“系统设置 → 隐私与安全性”中按提示允许该程序运行。
 
-macOS 0.1.3 通过程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。导入项目文件夹可保留相对路径和空目录，同时支持普通多文件导入。扫描 PDF 可先通过 OCR 获得文字层。
+macOS 0.1.4 通过程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。导入项目文件夹可保留相对路径和空目录，同时支持普通多文件导入。扫描 PDF 可先通过 OCR 获得文字层。
 
 ## Linux
 
@@ -72,7 +72,7 @@ Fedora 可使用 `sudo dnf install poppler-utils`。其他发行版从系统软�
 
 ## 首次使用与模型连接
 
-进入页面后，新建工作区，导入项目文件夹、Markdown、Notebook、Office、文本、图片或 PDF，将文稿和片段放入画布。文稿编辑、画布组织、保存和导出在本机完成，AI 讨论通过配置的模型服务运行。Windows 与 macOS 0.1.3 使用内置文字解析，Linux 的 0.1.0 包按对应章节安装 PDF 工具。
+进入页面后，新建工作区，导入项目文件夹、Markdown、Notebook、Office、文本、图片或 PDF，将文稿和片段放入画布。文稿编辑、画布组织、保存和导出在本机完成，AI 讨论通过配置的模型服务运行。Windows 与 macOS 0.1.4 使用内置文字解析，Linux 的 0.1.0 包按对应章节安装 PDF 工具。
 
 发行包默认配置连接本机 Router OAuth 服务：
 
@@ -93,6 +93,8 @@ Fedora 可使用 `sudo dnf install poppler-utils`。其他发行版从系统软�
 2. 填写 API 基础地址和 API Key。已保存的密钥只显示“已配置”状态，输入框留空即沿用；需要清除时点击“清除已保存的密钥”。
 3. 点击“测试连接并读取模型”，从目录中选择默认模型、启用模型和可读取图像的模型，也可以手动填写准确的模型 ID。网关需要的额外请求头放在“高级”区域。
 4. 点击“保存”。配置立即生效，讨论与画布提问的模型选项随之更新，无需重启。
+
+顶栏分别显示本地服务状态与模型服务状态。模型选项显示目录确认结果，目录读取失败时仍可选择启用模型；手动填写的模型在目录缺项时保留，并显示对应提示。连接错误提供中文说明和可展开的详细原因。图像模型的选择范围随启用列表更新。
 
 界面保存的设置写入 `config/server.local.toml`，并在启动时覆盖 `config/server.toml` 中的模型配置。也可以停止 Research Canvas，用文本编辑器打开 `config/server.toml`，按照该服务提供的接口地址和模型目录修改配置：
 
