@@ -153,7 +153,13 @@ function Composer() {
         }}
       />
       {composer.error && <p role="alert" className="text-xs text-[var(--rc-bad)]">{composer.error}</p>}
-      {health && !health.provider_configured && <p className="text-xs text-[var(--rc-warn)]">后端未配置模型凭据，可预览上下文，暂不能生成。</p>}
+      {health && !health.provider_configured && (
+        <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--rc-warn)]">
+          后端未配置模型凭据，可预览上下文，暂不能生成。
+          <Button size="xs" variant="secondary" onClick={() => setDialogs({ settings: true })}>打开模型设置</Button>
+        </p>
+      )}
+      {catalogError && <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--rc-warn)]">模型目录读取失败：{catalogError}<Button size="xs" variant="ghost" onClick={() => setDialogs({ settings: true })}>模型设置</Button></p>}
       <div className="flex items-center gap-1.5">
         <select
           aria-label="模型"

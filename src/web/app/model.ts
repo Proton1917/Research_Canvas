@@ -2,7 +2,7 @@
 import {
   api, ApiError, type Anchor, type AnchorResolution, type Canvas, type CanvasAction, type CanvasProposal, type CanvasProposalResult,
   type Capabilities, type Claim, type DocumentKind, type Health,
-  type EditorStateEnvelope, type ModelCatalog, type Proposal, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
+  type EditorStateEnvelope, type ModelCatalog, type Proposal, type ProviderSettings, type Relation, type RelationInput, type ResearchContext, type ResearchDocument,
   type Bounds, type ContextChange, type ProjectSummary, type ResearchEndpoint, type ResearchMode, type Run, subscribeRun, TERMINAL_RUN_STATUSES, type VisualAsset, type Workspace, type WorkspaceSummary,
 } from '@research';
 import {
@@ -104,6 +104,7 @@ export type Dialogs = {
   pdf?: { assetId: string; page: number; title: string } | null;
   version?: { documentId: string; version: number; anchorId?: string } | null;
   workspace?: boolean;
+  settings?: boolean;
 };
 
 export type AppState = {
@@ -341,6 +342,18 @@ export async function loadCapabilities() {
   } catch {
     app.set({ capabilities: null, capabilitiesChecked: true });
   }
+}
+
+/**
+ * 模型服务设置保存后重新取得服务状态、模型目录与能力声明，讨论和画布提问随之更新。
+ * 当前模型在新目录中时保留；目录读取失败时按保存的启用列表判断，其余情况采用新默认模型。
+ */
+export async function refreshProviderState(settings: ProviderSettings) {
+  app.set({ catalog: null, catalogError: null });
+  await Promise.all([checkHealth(), loadModels(), loadCapabilities()]);
+  const { catalog, model } = app.get();
+  if (!catalog && !settings.allowed_models.includes(model)) app.set({ model: settings.default_model });
+  return { model: app.get().model, catalogError: app.get().catalogError };
 }
 
 /** 能力是否已由服务声明。具体字段以 docs/api.md 记录的实际契约为准。 */

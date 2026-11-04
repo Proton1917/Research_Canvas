@@ -1,6 +1,6 @@
 import {
   ChatWithAiIcon, CloseIcon, CommentIcon, DarkModeIcon, DownloadIcon, EdgelessIcon, HistoryIcon, ImportIcon, LightModeIcon,
-  FolderIcon, LinkIcon, MoreHorizontalIcon, NoteShadowDuotoneIcon, PageIcon, PlusIcon, SearchIcon, SidebarIcon, TimelineIcon,
+  FolderIcon, LinkIcon, MoreHorizontalIcon, NoteShadowDuotoneIcon, PageIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TimelineIcon,
 } from '@blocksuite/icons/rc';
 import type { DocumentKind, ResearchDocument } from '@research';
 import { Button, ClayBreatheDot, PulseRunningDot, SegmentedControl } from '@ui';
@@ -87,6 +87,9 @@ function Header() {
           </Popover>
           <input ref={archiveInput} type="file" accept=".json,application/json" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void restoreArchive(file); }} />
         </div>
+        {/* 设置入口：桌面显示文字，窄屏保留图标 */}
+        <Button size="sm" variant="ghost" className="hidden sm:inline-flex" icon={<SettingsIcon width={16} height={16} />} onClick={() => setDialogs({ settings: true })} data-testid="open-settings">设置</Button>
+        <Button size="icon-sm" variant="ghost" className="sm:hidden" aria-label="设置" title="设置" icon={<SettingsIcon width={18} height={18} />} onClick={() => setDialogs({ settings: true })} data-testid="open-settings-compact" />
         <Button size="icon-sm" variant="ghost" aria-label={dark ? '切换到浅色' : '切换到深色'} icon={dark ? <LightModeIcon width={18} height={18} /> : <DarkModeIcon width={18} height={18} />} onClick={() => setTheme(!dark)} />
         <Button size="icon-sm" variant="ghost" className="xl:hidden" aria-label="打开研究面板" icon={<ChatWithAiIcon width={18} height={18} />} onClick={() => app.set(state => ({ panelOpen: !state.panelOpen }))} />
       </div>

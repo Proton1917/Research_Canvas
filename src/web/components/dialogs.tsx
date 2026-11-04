@@ -14,6 +14,7 @@ import { ANCHOR_STATUS_LABEL, excerpt, formatTime, formatUsage, KIND_LABEL, MODE
 import { reasonLabel } from '../panels/VersionsPanel';
 import { AnchorStatusChip, Chip, KindIcon } from './common';
 import { Markdown } from './Markdown';
+import { SettingsDialog } from './SettingsDialog';
 
 function DiffView({ before, after }: { before: string; after: string }) {
   const parts = useMemo(() => diffText(before, after), [before, after]);
@@ -528,6 +529,7 @@ export function Dialogs() {
       <SearchDialog />
       <PdfDialog />
       <WorkspaceDialog />
+      <SettingsDialog />
       <UnsavedDialog />
     </>
   );
