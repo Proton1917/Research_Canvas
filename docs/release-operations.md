@@ -1,6 +1,6 @@
 # Research Canvas 发行与下载镜像
 
-发行目标为 Windows x64 与 macOS Apple Silicon。GitHub Actions 的 `.github/workflows/release.yml` 使用 `platforms=desktop` 构建这两个目标。下载镜像提供安装包，Research Canvas 在用户本机运行。
+发行目标为 Windows x64、macOS Apple Silicon 与 Linux x64。GitHub Actions 的 `.github/workflows/release.yml` 使用 `platforms=desktop` 构建 Windows 与 macOS ARM64，使用 `platforms=linux` 单独构建 Linux x64。下载镜像提供安装包，Research Canvas 在用户本机运行。
 
 产品网站为 `https://mathana.homes/`，`#download` 提供下载入口，`#ai` 提供模型接入说明。页面源码位于 `site/index.html`，直接发布到 `/var/www/mathana-canvas/index.html`。该页面为独立静态 HTML，沿用内嵌样式与脚本。发行时同步首页、下载文件名、大小、链接、页脚源码提交和与产品版本相关的接入说明，并查看真实渲染及下载结果。
 
@@ -8,11 +8,11 @@
 
 ## 构建与发行
 
-在仓库根目录更新 Cargo.toml、Cargo.lock、package.json 及安装说明中的发行版本，提交集成代码后，手动触发发行工作流。记录构建对应的提交、工作流运行地址和两个原生平台的验收结果。工作流生成 `release-windows-x64` 与 `release-macos-arm64` artifacts，下载到项目 `.runtime/releases/<版本>/`。
+在仓库根目录更新 Cargo.toml、Cargo.lock、package.json 及安装说明中的发行版本，提交集成代码后，手动触发对应平台的发行工作流。记录构建对应的提交、工作流运行地址和原生平台的验收结果。工作流生成 `release-windows-x64`、`release-macos-arm64` 或 `release-linux-x64` artifacts，下载到项目 `.runtime/releases/<版本>/`。
 
 `scripts/release_smoke.py` 验证解压启动、初始配置、设置接口读写及本地覆盖文件、页面资源、能力、资料导入导出和正常停止。`provider_settings` 检查按原值保存，验证修订号加一、读取结果和覆盖文件，Unix 同时检查 0600 权限。该项在各平台原生 runner 执行，连接测试由实际模型联调承担。
 
-创建对应版本的 GitHub Release，上传两个 ZIP，发行说明列出平台、启动入口及该版本实际验证结果。每个平台的包内 SOURCE_COMMIT、VERSION 对应本次集成提交与版本。
+创建对应版本的 GitHub Release，上传 Windows、macOS 的 ZIP 与 Linux 的 tar.gz，发行说明列出平台、启动入口及该版本实际验证结果。各平台包内 SOURCE_COMMIT、VERSION 记录实际构建提交与版本，同一发行补充平台时在发行说明中分别列出构建提交。
 
 ## 镜像主机与路径
 

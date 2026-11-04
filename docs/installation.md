@@ -1,6 +1,6 @@
 # Research Canvas 安装与使用
 
-Research Canvas 0.1.4 提供 Windows x64 与 macOS Apple Silicon 发行包，Linux 当前发行包为 0.1.0。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
+Research Canvas 0.1.4 提供 Windows x64、macOS Apple Silicon 与 Linux x64 发行包。发行包包含后端程序与编译后的界面，使用浏览器访问本机服务。工作区、文稿、PDF、讨论和历史版本保存在解压目录中。
 
 ## 下载与选择
 
@@ -10,11 +10,11 @@ Research Canvas 0.1.4 提供 Windows x64 与 macOS Apple Silicon 发行包，Lin
 | --- | --- | --- |
 | Windows 10/11，x64 | `research-canvas-0.1.4-windows-x64.zip` | `start.cmd` |
 | macOS 13 及以上，Apple Silicon | `research-canvas-0.1.4-macos-arm64.zip` | `Start.command` 或 `bash start.sh` |
-| Linux x64，glibc 2.35 及以上 | `research-canvas-0.1.0-linux-x64.tar.gz` | `bash start.sh` |
+| Linux x64，glibc 2.35 及以上 | `research-canvas-0.1.4-linux-x64.tar.gz` | `bash start.sh` |
 
 macOS 的处理器信息位于“苹果菜单 → 关于本机”，Apple M 系列选择 arm64。Windows 可在“设置 → 系统 → 系统信息”查看系统类型。Linux 可运行 `uname -m` 查看，`x86_64` 对应 x64。
 
-Windows 与 macOS 安装包位于 [0.1.4 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.4)，Linux 安装包位于 [0.1.0 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0)。
+三个系统的安装包均位于 [0.1.4 发行页](https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.4)。
 
 GitHub 页面附带的 `Source code` 是开发源码压缩包。直接使用应用时，下载上表对应的发行文件。
 
@@ -53,26 +53,18 @@ macOS 0.1.4 通过程序内置解析库读取 PDF 文字层、Excel 工作表及
 以 Ubuntu 22.04 及以上为例：
 
 ```bash
-tar -xzf research-canvas-0.1.0-linux-x64.tar.gz
-cd research-canvas-0.1.0-linux-x64
+tar -xzf research-canvas-0.1.4-linux-x64.tar.gz
+cd research-canvas-0.1.4-linux-x64
 bash start.sh
 ```
 
 在浏览器打开 **http://127.0.0.1:8787**，停止时在终端按 `Ctrl+C`。程序运行目录需要可写权限。
 
-PDF 导入工具在 Ubuntu/Debian 上通过以下命令安装：
-
-```bash
-sudo apt-get update
-sudo apt-get install poppler-utils
-pdftotext -v
-```
-
-Fedora 可使用 `sudo dnf install poppler-utils`。其他发行版从系统软件源安装提供 `pdftotext` 的 Poppler 工具包。
+Linux 0.1.4 使用程序内置解析库读取 PDF 文字层、Excel 工作表及公式、PowerPoint 正文及备注。模型设置位于页面顶栏的「设置 → 模型服务」。
 
 ## 首次使用与模型连接
 
-进入页面后，新建工作区，导入项目文件夹、Markdown、Notebook、Office、文本、图片或 PDF，将文稿和片段放入画布。文稿编辑、画布组织、保存和导出在本机完成，AI 讨论通过配置的模型服务运行。Windows 与 macOS 0.1.4 使用内置文字解析，Linux 的 0.1.0 包按对应章节安装 PDF 工具。
+进入页面后，新建工作区，导入项目文件夹、Markdown、Notebook、Office、文本、图片或 PDF，将文稿和片段放入画布。文稿编辑、画布组织、保存和导出在本机完成，AI 讨论通过配置的模型服务运行。三个系统的 0.1.4 发行包均使用内置文字解析。
 
 发行包默认配置连接本机 Router OAuth 服务：
 
