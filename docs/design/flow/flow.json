@@ -998,6 +998,105 @@
       "evidence": "observed",
       "state": "390×844：侧栏收起、无横向滚动，画布入口可见；恢复与桌面相同的保存视口；选中卡片后操作行保持 40px 并可横向滚动",
       "evidenceNote": "2026-11-02 在 8804 独立实例（8790 验收库副本，后端为当前构建）用 Playwright 驱动 Chrome 实测，画布「交接验收：连线与提问」；脚本与结果在 tmp/canvas-viewport/。"
+    },
+    {
+      "id": "settings_read",
+      "title": "模型服务设置",
+      "image": "screenshots/settings_read-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "顶栏“设置”打开：修订 0，协议 Anthropic Messages，Router 地址，凭据显示“认证请求头已配置”，API Key 输入框留空；高级区域列出请求头名称 anthropic-version、authorization",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_test",
+      "title": "测试连接并读取模型",
+      "image": "screenshots/settings_test-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "按当前表单读取模型目录：“已连接，取得 10 个模型的目录；默认模型 cc/gemini-3.8-flash-high 在目录中”，默认模型旁显示“目录中存在”，下方目录可选默认、启用和图像模型",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_test_fail",
+      "title": "连接失败",
+      "image": "screenshots/settings_test_fail-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "地址改为未监听端口：显示重新提供认证信息的提示；测试结果显示服务返回的“error sending request for url …”，表单保留所填地址",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_models",
+      "title": "更换服务并选择模型",
+      "image": "screenshots/settings_models-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "切换到 Chat Completions 与另一地址并填写密钥；原默认模型标记“目录中未找到”。选择 mock/text-small 为默认、启用 mock/reasoning、设 mock/vision-large 读取图像，并手动添加 mock/manual-id",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_saved",
+      "title": "保存后模型选项更新",
+      "image": "screenshots/settings_saved-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "保存成功后关闭设置并提示修订号；随即重新请求 /api/health、/api/models、/api/capabilities，讨论框模型下拉更新为新目录并采用新默认模型 Mock Text Small，图像能力改为 mock/vision-large",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_clear",
+      "title": "显式清除密钥",
+      "image": "screenshots/settings_clear-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "“清除已保存的密钥”后显示“保存后清除”，可撤销；保存提交 api_key 为空字符串，重新打开显示“未配置密钥”，服务随后的目录请求不再携带认证头",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_conflict",
+      "title": "设置修订冲突",
+      "image": "screenshots/settings_conflict-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "设置打开期间其他客户端保存：保存返回 409 settings_conflict，表单输入保留，提示当前修订与表单修订，并提供“载入当前设置”和“按修订 N 再次保存”",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_discussion",
+      "title": "设置后发起讨论",
+      "image": "screenshots/settings_discussion-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "切回 Router 并保存后，讨论框模型为 cc/gemini-3.8-flash-high；正常发送问题，运行成功，返回模型 gemini-3.8-flash-n，回答显示在讨论面板",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "settings_narrow",
+      "title": "窄屏设置",
+      "image": "screenshots/settings_narrow-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "390×844：顶栏设置图标可见，对话框宽 358px，页面宽度保持 390；表单单列显示，底部为取消、测试连接并读取模型、保存",
+      "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
     }
   ],
   "edges": [
@@ -1646,6 +1745,63 @@
       "to": "canvas_narrow",
       "action": "390px 窄屏",
       "evidence": "observed"
+    },
+    {
+      "from": "canvas",
+      "to": "settings_read",
+      "action": "点击顶栏“设置”",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "settings_read",
+      "to": "settings_test",
+      "action": "测试连接并读取模型",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_test",
+      "to": "settings_test_fail",
+      "action": "改为离线地址后测试",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_test",
+      "to": "settings_models",
+      "action": "更换协议、地址与密钥后测试",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_models",
+      "to": "settings_saved",
+      "action": "保存",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_saved",
+      "to": "settings_clear",
+      "action": "重新打开 → 清除已保存的密钥",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_saved",
+      "to": "settings_conflict",
+      "action": "其他客户端保存后再保存",
+      "evidence": "observed",
+      "back": "载入当前设置"
+    },
+    {
+      "from": "settings_saved",
+      "to": "settings_discussion",
+      "action": "切回 Router 保存 → 发送讨论",
+      "evidence": "observed"
+    },
+    {
+      "from": "canvas_narrow",
+      "to": "settings_narrow",
+      "action": "点击设置图标",
+      "evidence": "observed",
+      "back": "取消"
     }
   ],
   "pending": [

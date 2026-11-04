@@ -29,7 +29,7 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 | `src/web/app/` | 应用状态与操作（`model.ts`）、项目目录与文件夹导入（`projects.ts`）、提问材料与阅读范围（`materials.ts`）、页面框架（`App.tsx`） |
 | `src/web/views/` | 画布视图（卡片、片段卡片、连线视图、卡片内编辑）、画布原位提问与截图列表（`CanvasAsk.tsx`）、AI 画布提案（`CanvasProposal.tsx`）、学科桥卡（`BridgeCard.tsx`）、待归位记录（`PendingRuns.tsx`）与文稿视图 |
 | `src/web/panels/` | 研究面板：讨论、批注、关系、版本、运行 |
-| `src/web/components/` | 弹窗（上下文、比较、修改预览、版本、检索、PDF、工作区）、项目文件夹导入（`ProjectImport.tsx`）、侧栏项目目录（`ProjectTree.tsx`）、导入文件的来源栏（`FileInfo.tsx`）、Markdown 渲染、编辑器挂载 |
+| `src/web/components/` | 弹窗（上下文、比较、修改预览、版本、检索、PDF、工作区）、设置 → 模型服务（`SettingsDialog.tsx`）、项目文件夹导入（`ProjectImport.tsx`）、侧栏项目目录（`ProjectTree.tsx`）、导入文件的来源栏（`FileInfo.tsx`）、Markdown 渲染、编辑器挂载 |
 | `src/web/lib/` | 状态容器、格式化、差异比较，以及文件夹读取（`folders.ts`：目录选择器、`webkitdirectory` 输入与拖放目录） |
 | `src/research/api/` | 接口类型与请求客户端，含 SSE 订阅与重连 |
 | `src/research/editor/` | 工作区适配、编辑会话（保存序号、冲突、重载、画布暂停与采用服务端状态、连线视图）、场景投影（`scene.ts`）、文本块投影、选段换算、资产映射 |
@@ -128,8 +128,37 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
 - **打开工作区时的画布**：优先打开浏览器保存的 `rc:canvas:<workspace_id>`。该值缺失或指向已删除画布时，打开工作区画布列表的首项；服务按 `updated_at,id` 升序返回，首项是最久未更新的画布。
 - **画布视口**：浏览器按 `rc:viewport:<workspace_id>:<canvas_id>` 保存 `{zoom, center}`，与画布对象布局分开管理。内存中随视口更新维护当前值，视口操作停止 400 ms、离开画布、页面隐藏或关闭时写入。回到画布或刷新时用 `gfx.viewport.setViewport` 恢复；在用户操作或其他聚焦之前，容器尺寸变化（待确认提示条出现、侧栏切换）后保持恢复时的中心。没有保存值时沿用显示全部内容的初始定位；“显示全部内容”按钮、来源定位、讨论归位与提案预览使用各自的聚焦操作，结果同样记为当前视口。
 - **讨论**：侧栏讨论的预览与发送先保存所选文稿；材料在冻结后被修改时（`stale_context`）载入新版本并重新冻结。预览上下文与发送使用同一 `context_id`；生成结果以 SSE 流式显示，回答按 Markdown（含表格与公式）渲染并保存为讨论文稿。讨论脉络按上下文关系组织，合并讨论挂在最近的直接分支下。
+- **模型服务设置**：顶栏“设置”（窄屏为图标）打开 `SettingsDialog`，接口约定见 [api.md](api.md) 的“模型服务设置”。
+  - 每次打开调用 `api.providerSettings()`，记录 `revision`，按 `credential_source` 与 `api_key_configured` 显示凭据状态（已保存密钥、环境变量提供或未设置、认证请求头、未配置），API Key 输入框留空。关闭时表单与其中的密钥一并丢弃；有未保存修改时先确认。
+  - 凭据：输入框为空时省略 `api_key` 沿用已有凭据；输入新值时提交新值；“清除已保存的密钥／清除认证请求头”后提交空字符串，可撤销。协议或地址与已保存值不同时提示重新提供认证信息，已保存的密钥和请求头不沿用。保存完成后表单按服务返回值重建，密钥值清空。
+  - 高级请求头：读取结果只显示名称；“修改请求头”按已保存名称生成待填写取值的行，“清空请求头”提交空对象，提交时以完整对象替换；不修改时省略 `headers`。名称为空、取值为空或重名时阻止提交。
+  - 模型：默认模型输入框可直接填写准确 ID，并从目录候选中选择；目录表格的行顺序固定为已保存模型、目录条目、手动添加，逐行选择默认、启用与读取图像。默认模型自动启用，取消启用同时取消图像；`vision_models` 提交启用模型中的子集，`allowed_models` 始终完整提交。
+  - 连接测试使用当前表单（含 `model` = 默认模型），显示取得的模型数及默认模型是否在目录中；失败时显示服务返回的信息。表单在测试后变化时标注结果对应修改前的配置。保存独立于连接测试。
+  - 保存使用读取时的修订号。成功后关闭设置并调用 `refreshProviderState`：重新请求 `/health`、`/models`、`/capabilities`，讨论与画布提问共用的模型选择在新目录中时保留，否则采用新默认模型；目录读取失败时按保存的启用列表判断。409 `settings_conflict` 保留表单，提示当前修订号，提供“载入当前设置”和“按修订 N 再次保存”；保存失败或冲突提示出现时滚动到可见位置。
+  - 讨论框在服务未配置凭据或模型目录读取失败时提供打开设置的入口。
 
 ## 验证记录
+
+### 2026-11-03 设置 → 模型服务
+
+在 8805 独立实例上验证：后端为 `.runtime/bin/research-canvas` 当前构建（含 `22e1858` 的设置接口），数据库为 8790 验收库副本，配置在 `tmp/provider-settings-ui/server.toml`，设置保存到同目录 `server.local.toml`。初始 provider 与 `config/server.toml` 相同（Router `http://127.0.0.1:43177/v1`、Anthropic Messages、认证请求头、`cc/gemini-3.8-flash-high`）。Playwright 驱动无头 Chrome 执行真实点击与输入，脚本 `s1_settings.py`、结果 `s1.json`、模拟服务记录 `mock.jsonl` 和截图 `shots/` 位于 `tmp/provider-settings-ui/`，页面错误为 0。前端类型检查与生产构建通过。
+
+本机 Router 对未携带或未识别的密钥会返回包含其他上游的目录。为避免产生 OpenRouter 流量，密钥替换、请求头替换与显式清除在本机模拟服务 `mock_provider.py`（`127.0.0.1:43901/v1`，记录每次请求收到的认证头）上验证；Router 只使用 `router-local-client` 凭据和 `cc/gemini-3.8-flash-high`。
+
+已验证（1440×900）：
+- **入口与读取**：顶栏高 48px，“设置”按钮可见。打开后显示修订 0、Anthropic Messages、Router 地址、“认证请求头已配置”，API Key 输入框为空，占位文字“已配置，留空沿用；输入新密钥以替换”，高级区域列出 `anthropic-version`、`authorization`。
+- **测试连接**：结果为“已连接，取得 10 个模型的目录；默认模型 cc/gemini-3.8-flash-high 在目录中”，目录表格 10 行。地址改为未监听的 `43999` 端口后出现重新认证提示，测试显示服务返回的 `error sending request for url (http://127.0.0.1:43999/v1/models)`，表单保留该地址；改回 Router 后提示消失，旧结果标注“表单已修改”。
+- **Router 新密钥**：填写 19 字符密钥保存，请求含 `api_key` 与 `expected_revision: 0`，返回修订 1、`credential_source: saved`、请求头只剩 `anthropic-version`。保存后依次请求 `/api/health`、`/api/models`、`/api/capabilities`，提示“模型设置已保存（修订 1），讨论与画布提问使用 cc/gemini-3.8-flash-high”。
+- **切换服务与模型选择**：重新打开显示修订 1、“已保存密钥”。切到 Chat Completions 与模拟服务地址后出现重新认证提示，填写密钥 A 测试：3 个模型，原默认模型标记“目录中未找到”。选择 `mock/text-small` 为默认、启用 `mock/reasoning`、`mock/vision-large` 读取图像，取消 Gemini，手动添加 `mock/manual-id`，再测得“默认模型 mock/text-small 在目录中”。保存为修订 2 后，讨论框模型选项变为 Mock Text Small（默认）、Mock Vision Large、Mock Reasoning，选中新默认模型；`/api/capabilities` 的 `vision_models` 为 `mock/vision-large`；模拟服务收到 `Bearer mock-key-A`。手动添加的 ID 保存在启用列表中，`/api/models` 只列出上游目录中存在的模型。
+- **刷新与重新打开**：刷新页面后打开设置，显示修订 2、Chat Completions、模拟服务地址、“已保存密钥”，密钥框为空，模型勾选与保存值一致。
+- **密钥替换**：填写密钥 B 保存为修订 3，保存后的目录请求携带 `Bearer mock-key-B`。
+- **请求头替换**：高级区域添加 `x-gateway-tag` 保存为修订 4，请求只提交 `headers`（省略 `api_key`），之后的目录请求同时携带 `Bearer mock-key-B` 与 `x-gateway-tag: ui-check`。
+- **显式清除**：点击“清除已保存的密钥”显示“保存后清除”，保存提交空字符串，返回修订 5、`api_key_configured: false`、`credential_source: none`；随后的目录请求无认证头，自定义请求头保留。重新打开显示“未配置密钥”，占位为“输入 API Key”。
+- **409 冲突**：设置打开期间通过接口另存为修订 6，界面修改后保存返回 409，冲突提示显示当前修订 6 与表单修订 5，两项操作在对话框内可见，修改的勾选保留；“按修订 6 再次保存”成功为修订 7。再次构造冲突（修订 8）后选择“载入当前设置”，表单变为修订 8 的服务端内容。
+- **切回 Router 并讨论**：选 Anthropic Messages、Router 地址，填写 Router 密钥测试得到 10 个模型，选择 `cc/gemini-3.8-flash-high` 为默认并读取图像，取消模拟模型，保存为修订 9；讨论框只剩 Gemini 并被选中，`vision_models` 为 Gemini。在讨论面板输入问题并发送，请求模型 `cc/gemini-3.8-flash-high`，运行 `succeeded`，返回模型 `gemini-3.8-flash-n`，回答显示在讨论面板并保存为讨论文稿。
+- **窄屏**（390×844）：设置图标位于顶栏（28×28），文字按钮隐藏，页面宽度 390；对话框 358×726，表单单列显示修订 9 与“已保存密钥”。输入后点“取消”出现“放弃未保存的修改？”确认，选择放弃后关闭。
+
+实测中修复：模型表格最初按“默认、启用、目录”排序，设默认或取消启用时行位置跳动，不在目录中的行取消后直接消失；现在行顺序固定。409 提示最初位于表单末尾的滚动区外，现在出现时滚动到可见位置。
 
 ### 2026-11-02 画布界面与视口恢复
 
