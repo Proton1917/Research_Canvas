@@ -8,7 +8,7 @@ import {
   sendComposer, setDialogs, setInheritMode, setModel, togglePicked, updateComposer, useApp,
 } from '../app/model';
 import { inheritedSources } from '../app/materials';
-import { AnchorStatusChip, Chip, EmptyState, KindIcon, SectionTitle } from '../components/common';
+import { AnchorStatusChip, asSentence, Chip, EmptyState, KindIcon, modelStatusLabel, ProviderErrorDetails, SectionTitle } from '../components/common';
 import { Markdown } from '../components/Markdown';
 import { formatTime, formatUsage, MODE_LABEL, RUN_STATUS_LABEL } from '../lib/format';
 
@@ -103,6 +103,7 @@ function Composer() {
   const anchors = (summary?.anchors ?? []).filter(anchor => composer.anchorIds.includes(anchor.id));
   const docs = (summary?.documents ?? []).filter(doc => composer.documentIds.includes(doc.id));
   const titleOf = (id: string) => summary?.documents.find(doc => doc.id === id)?.title ?? '文稿';
+  const selectedStatus = catalog?.models.find(entry => entry.id === model)?.available;
   const canSend = connection === 'online' && !!composer.question.trim() && composer.busy === null && health?.provider_configured !== false;
   const stale = !!composer.preview && composer.previewKey !== JSON.stringify([composer.mode, composer.question.trim(), [...composer.documentIds].sort(), [...composer.anchorIds].sort()]);
 
@@ -155,11 +156,23 @@ function Composer() {
       {composer.error && <p role="alert" className="text-xs text-[var(--rc-bad)]">{composer.error}</p>}
       {health && !health.provider_configured && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--rc-warn)]">
-          后端未配置模型凭据，可预览上下文，暂不能生成。
+          {health.credential_source === 'environment' ? '模型密钥所需的环境变量未设置' : '后端未配置模型凭据'}，可预览上下文，暂不能生成。
           <Button size="xs" variant="secondary" onClick={() => setDialogs({ settings: true })}>打开模型设置</Button>
         </p>
       )}
-      {catalogError && <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--rc-warn)]">模型目录读取失败：{catalogError}<Button size="xs" variant="ghost" onClick={() => setDialogs({ settings: true })}>模型设置</Button></p>}
+      {catalogError && <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--rc-warn)]">模型目录请求失败：{catalogError}<Button size="xs" variant="ghost" onClick={() => setDialogs({ settings: true })}>模型设置</Button></p>}
+      {catalog?.directory_error && (
+        <div role="status" className="space-y-1 text-xs" data-testid="directory-error">
+          <p className="flex flex-wrap items-center gap-1.5 text-[var(--rc-warn)]">
+            模型目录读取失败：{asSentence(catalog.directory_error.message)}启用模型仍可选择，生成结果以运行状态为准。
+            <Button size="xs" variant="ghost" onClick={() => setDialogs({ settings: true })}>模型设置</Button>
+          </p>
+          <ProviderErrorDetails details={catalog.directory_error.details} />
+        </div>
+      )}
+      {!catalog?.directory_error && selectedStatus === false && (
+        <p className="text-xs text-[var(--rc-warn)]" data-testid="model-missing">所选模型 <span className="font-mono">{model}</span> 在服务目录中未找到，仍可发送，生成结果以运行状态为准。</p>
+      )}
       <div className="flex items-center gap-1.5">
         <select
           aria-label="模型"
@@ -170,9 +183,10 @@ function Composer() {
           title={catalogError ?? undefined}
         >
           {!catalog && <option value="">{catalogError ? '模型目录读取失败' : '读取模型目录…'}</option>}
-          {catalog?.models.map(entry => (
-            <option key={entry.id} value={entry.id}>{entry.name ?? entry.id}{entry.id === catalog.default_model ? '（默认）' : ''}</option>
-          ))}
+          {catalog?.models.map(entry => {
+            const status = modelStatusLabel(entry.available);
+            return <option key={entry.id} value={entry.id}>{entry.name ?? entry.id}{entry.id === catalog.default_model ? '（默认）' : ''}{status ? ` · ${status}` : ''}</option>;
+          })}
         </select>
         <Button
           size="sm"

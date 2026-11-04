@@ -346,14 +346,16 @@ export async function loadCapabilities() {
 
 /**
  * 模型服务设置保存后重新取得服务状态、模型目录与能力声明，讨论和画布提问随之更新。
- * 当前模型在新目录中时保留；目录读取失败时按保存的启用列表判断，其余情况采用新默认模型。
+ * /models 按启用列表返回全部模型（上游目录失败时附 directory_error）；当前模型在启用列表中时保留，
+ * 其余情况采用新默认模型。/models 请求本身失败时按保存的启用列表判断。
  */
 export async function refreshProviderState(settings: ProviderSettings) {
   app.set({ catalog: null, catalogError: null });
   await Promise.all([checkHealth(), loadModels(), loadCapabilities()]);
   const { catalog, model } = app.get();
   if (!catalog && !settings.allowed_models.includes(model)) app.set({ model: settings.default_model });
-  return { model: app.get().model, catalogError: app.get().catalogError };
+  const current = app.get();
+  return { model: current.model, catalogError: current.catalogError, directoryError: current.catalog?.directory_error?.message ?? null };
 }
 
 /** 能力是否已由服务声明。具体字段以 docs/api.md 记录的实际契约为准。 */

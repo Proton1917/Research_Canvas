@@ -108,3 +108,37 @@ export function MenuItem({ icon, children, onClick, disabled, hint }: { icon?: R
     </button>
   );
 }
+
+/** 服务返回的中文说明不带句末标点时补上，便于与界面后续说明连读。 */
+export function asSentence(text: string) {
+  return /[。！？.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}。`;
+}
+
+/** 模型目录状态：true 目录已列出，false 目录中未找到，null 目录读取失败待确认。 */
+export function modelStatusLabel(available: boolean | null | undefined) {
+  if (available === false) return '目录中未找到';
+  if (available === null) return '未能确认';
+  return null;
+}
+
+const PROVIDER_ERROR_KIND: Record<string, string> = {
+  connection: '连接失败', timeout: '请求超时', tls: 'TLS', dns: '域名解析', authentication: '认证', endpoint: '接口地址',
+  rate_limit: '额度或频率限制', http: 'HTTP 错误', response_format: '响应格式', transport: '数据传输',
+};
+
+/** 模型服务错误的分类、上游状态与脱敏原始原因，放在可展开区域。 */
+export function ProviderErrorDetails({ details, className = '' }: { details: unknown; className?: string }) {
+  const value = details && typeof details === 'object' ? (details as Record<string, unknown>) : {};
+  const kind = typeof value.kind === 'string' ? value.kind : null;
+  const status = typeof value.upstream_status === 'number' ? value.upstream_status : null;
+  const original = typeof value.original === 'string' ? value.original : null;
+  if (!kind && status === null && !original) return null;
+  return (
+    <details className={`text-[11px] text-ink-secondary ${className}`} data-testid="provider-error-details">
+      <summary className="rc-focus-ring cursor-pointer rounded text-ink-muted">
+        详细原因{kind ? ` · ${PROVIDER_ERROR_KIND[kind] ?? kind}` : ''}{status !== null ? ` · HTTP ${status}` : ''}
+      </summary>
+      {original && <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-[var(--cds-alpha-1)] px-2 py-1.5 font-mono text-[11px] text-ink-secondary">{original}</p>}
+    </details>
+  );
+}

@@ -7,7 +7,7 @@ import { Button, Dialog, SegmentedControl, SkeletonShimmer } from '@ui';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { errorText, refreshProviderState, setDialogs, toast, useApp } from '../app/model';
-import { Chip } from './common';
+import { asSentence, Chip, ProviderErrorDetails } from './common';
 
 const PROTOCOLS: { id: ProviderProtocol; label: string }[] = [
   { id: 'chat_completions', label: 'Chat Completions' },
@@ -37,10 +37,10 @@ type Draft = {
 
 type TestState =
   | { status: 'ok'; result: ProviderConnectionTest; signature: string }
-  | { status: 'error'; message: string; signature: string }
+  | { status: 'error'; message: string; details?: unknown; signature: string }
   | null;
 
-type Feedback = { tone: 'error' | 'conflict'; message: string; currentRevision?: number } | null;
+type Feedback = { tone: 'error' | 'conflict'; message: string; details?: unknown; currentRevision?: number } | null;
 
 let rowSeq = 0;
 const unique = (items: string[]) => [...new Set(items.map(item => item.trim()).filter(Boolean))];
@@ -129,8 +129,9 @@ function TestResult({ test, stale }: { test: NonNullable<TestState>; stale: bool
   if (test.status === 'error') {
     return (
       <div role="alert" className="rounded-lg border border-orange-500/30 bg-orange-500/5 px-3 py-2 text-xs" data-testid="provider-test-result">
-        <p className="font-medium text-[var(--rc-bad)]">连接失败</p>
-        <p className="mt-0.5 break-words text-ink-secondary">{test.message}</p>
+        <p className="font-medium text-[var(--rc-bad)]">连接测试失败</p>
+        <p className="mt-0.5 break-words text-ink">{test.message}</p>
+        <ProviderErrorDetails details={test.details} className="mt-1" />
         {stale && <p className="mt-1 text-ink-muted">表单已修改，结果对应修改前的配置。</p>}
       </div>
     );
@@ -158,6 +159,8 @@ function ModelTable({ draft, saved, entries, tested, onChange }: {
   const [filter, setFilter] = useState('');
   const [manual, setManual] = useState('');
   const names = useMemo(() => new Map(entries.map(entry => [entry.id, entry.name && entry.name !== entry.id ? entry.name : null])), [entries]);
+  // 未测试时采用已保存配置的目录状态（/api/models 的 available），测试后以候选目录为准
+  const availability = useMemo(() => new Map(entries.map(entry => [entry.id, entry.available])), [entries]);
   // 行顺序固定：已保存的模型、目录条目、手动添加；勾选时行位置不变
   const rows = useMemo(() => unique([...saved, ...entries.map(entry => entry.id), ...draft.allowed, ...draft.vision, draft.defaultModel]), [saved, entries, draft.allowed, draft.vision, draft.defaultModel]);
   const query = filter.trim().toLowerCase();
@@ -200,15 +203,17 @@ function ModelTable({ draft, saved, entries, tested, onChange }: {
             {visible.map(id => {
               const isDefault = id === defaultId;
               const enabled = isDefault || draft.allowed.includes(id);
-              const missing = tested && !names.has(id);
+              const missing = tested ? !names.has(id) : availability.get(id) === false;
+              const unconfirmed = !tested && availability.get(id) === null;
               return (
                 <tr key={id} className={`border-b border-line last:border-b-0 ${isDefault ? 'bg-clay/5' : ''}`}>
                   <td className="min-w-0 px-2.5 py-1.5">
                     <span className="block truncate font-mono text-[12px] text-ink" title={id}>{id}</span>
-                    {(names.get(id) || missing) && (
+                    {(names.get(id) || missing || unconfirmed) && (
                       <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-ink-muted">
                         {names.get(id) && <span className="min-w-0 truncate">{names.get(id)}</span>}
-                        {missing && <Chip tone="warn" title="连接测试取得的目录中没有该模型 ID">目录中未找到</Chip>}
+                        {missing && <Chip tone="warn" title={tested ? '连接测试取得的目录中没有该模型 ID' : '当前服务目录中没有该模型 ID，仍可选择'}>目录中未找到</Chip>}
+                        {unconfirmed && <Chip title="当前服务目录读取失败，模型状态待确认，仍可选择">未能确认</Chip>}
                       </span>
                     )}
                   </td>
@@ -359,7 +364,7 @@ export function SettingsDialog() {
       const result = await api.testProviderConnection({ ...connectionInput(draft), model: draft.defaultModel.trim() || undefined });
       setTest({ status: 'ok', result, signature: sent });
     } catch (error) {
-      setTest({ status: 'error', message: errorText(error), signature: sent });
+      setTest({ status: 'error', message: errorText(error), details: error instanceof ApiError ? error.details : undefined, signature: sent });
     } finally {
       setBusy(null);
     }
@@ -388,15 +393,16 @@ export function SettingsDialog() {
       setDraft(draftFrom(saved));
       setDialogs({ settings: false });
       const state = await refreshProviderState(saved);
-      toast(state.catalogError
-        ? `模型设置已保存（修订 ${saved.revision}）。模型目录读取失败：${state.catalogError}`
-        : `模型设置已保存（修订 ${saved.revision}），讨论与画布提问使用 ${state.model || saved.default_model}`, state.catalogError ? 'error' : 'success');
+      const failure = state.directoryError ?? state.catalogError;
+      toast(failure
+        ? `模型设置已保存（修订 ${saved.revision}），讨论与画布提问使用 ${state.model || saved.default_model}。模型目录读取失败：${failure}`
+        : `模型设置已保存（修订 ${saved.revision}），讨论与画布提问使用 ${state.model || saved.default_model}`, failure ? 'error' : 'success');
     } catch (error) {
       if (error instanceof ApiError && error.code === 'settings_conflict') {
         const current = error.details.current_revision;
         setFeedback({ tone: 'conflict', message: error.message, currentRevision: typeof current === 'number' ? current : undefined });
       } else {
-        setFeedback({ tone: 'error', message: errorText(error) });
+        setFeedback({ tone: 'error', message: errorText(error), details: error instanceof ApiError ? error.details : undefined });
       }
     } finally {
       setBusy(null);
@@ -431,6 +437,13 @@ export function SettingsDialog() {
           {settings && <Chip title="保存时以此修订号检查并发修改">修订 {revision}</Chip>}
           {settings && <CredentialStatus settings={settings} />}
         </div>
+
+        {settings && catalog?.directory_error && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs" data-testid="settings-directory-error">
+            <p className="text-ink">当前配置的模型目录读取失败：{asSentence(catalog.directory_error.message)}启用模型仍可选择。</p>
+            <ProviderErrorDetails details={catalog.directory_error.details} className="mt-1" />
+          </div>
+        )}
 
         {busy === 'load' && !draft && <div className="space-y-3"><SkeletonShimmer height={52} /><SkeletonShimmer height={52} /><SkeletonShimmer height={52} /><SkeletonShimmer height={160} /></div>}
         {loadError && !draft && (
@@ -485,7 +498,12 @@ export function SettingsDialog() {
             <HeadersSection draft={draft} settings={settings} changed={changed} onChange={patch} />
 
             <div ref={feedbackRef} className="empty:hidden">
-              {feedback?.tone === 'error' && <p role="alert" className="rounded-lg border border-orange-500/30 bg-orange-500/5 px-3 py-2 text-xs text-[var(--rc-bad)]">{feedback.message}</p>}
+              {feedback?.tone === 'error' && (
+                <div role="alert" className="rounded-lg border border-orange-500/30 bg-orange-500/5 px-3 py-2 text-xs">
+                  <p className="text-[var(--rc-bad)]">{feedback.message}</p>
+                  <ProviderErrorDetails details={feedback.details} className="mt-1" />
+                </div>
+              )}
               {feedback?.tone === 'conflict' && (
                 <div role="alert" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs" data-testid="provider-conflict">
                   <p className="text-ink">{feedback.message}{feedback.currentRevision !== undefined && `（当前修订 ${feedback.currentRevision}，本表单基于修订 ${revision}）`}。表单中的输入仍保留。</p>

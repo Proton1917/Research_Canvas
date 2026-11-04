@@ -2,7 +2,7 @@ import {
   ChatWithAiIcon, CloseIcon, CommentIcon, DarkModeIcon, DownloadIcon, EdgelessIcon, HistoryIcon, ImportIcon, LightModeIcon,
   FolderIcon, LinkIcon, MoreHorizontalIcon, NoteShadowDuotoneIcon, PageIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TimelineIcon,
 } from '@blocksuite/icons/rc';
-import type { DocumentKind, ResearchDocument } from '@research';
+import type { DocumentKind, Health, ResearchDocument } from '@research';
 import { Button, ClayBreatheDot, PulseRunningDot, SegmentedControl } from '@ui';
 import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -40,11 +40,51 @@ function ConnectionPill() {
   }
   if (running > 0) return <PulseRunningDot label={`${running} 个生成任务`} />;
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-500/10 p-1.5 text-[11px] font-medium text-[var(--rc-ok)] sm:px-2.5 sm:py-1" title={`数据库 ${health?.database ?? ''}`}>
+    <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-500/10 p-1.5 text-[11px] font-medium text-[var(--rc-ok)] sm:px-2.5 sm:py-1" title={`本地服务在线 · 数据库 ${health?.database ?? ''}`} data-testid="service-status">
       <span className="size-2 rounded-full bg-[var(--rc-ok)]" aria-hidden="true" />
       {/* 窄屏只保留状态点，文字供读屏使用 */}
-      <span className="sr-only sm:not-sr-only">{health?.provider_configured ? '服务就绪' : '服务就绪 · 未配置模型凭据'}</span>
+      <span className="sr-only sm:not-sr-only">服务在线</span>
     </span>
+  );
+}
+
+const CREDENTIAL_LABEL: Record<Health['credential_source'], string> = {
+  saved: '密钥已保存', environment: '环境变量密钥', headers: '请求头认证', none: '免凭据配置',
+};
+
+/**
+ * 模型服务状态：凭据配置来自 /health，目录请求结果来自 /models；生成结果由各次运行展示。
+ * 点击打开模型设置。
+ */
+function ModelStatus() {
+  const connection = useApp(state => state.connection);
+  const health = useApp(state => state.health);
+  const catalog = useApp(state => state.catalog);
+  const catalogError = useApp(state => state.catalogError);
+  const model = useApp(state => state.model);
+  if (connection !== 'online' || !health) return null;
+  const source = health.credential_source;
+  const credential = !health.provider_configured
+    ? (source === 'environment' ? '密钥环境变量未设置' : '模型凭据缺失')
+    : source ? CREDENTIAL_LABEL[source] : '凭据状态未知';
+  const selected = catalog?.models.find(entry => entry.id === model);
+  const directory = catalogError ? '目录请求失败'
+    : !catalog ? '读取目录…'
+      : catalog.directory_error ? '目录读取失败'
+        : selected?.available === false ? '所选模型未在目录' : '目录已确认';
+  const tone = !health.provider_configured ? 'bad'
+    : catalogError || catalog?.directory_error || selected?.available === false ? 'warn'
+      : source === 'none' ? 'muted' : 'ok';
+  const toneClass = { ok: 'bg-emerald-500/10 text-[var(--rc-ok)]', warn: 'bg-amber-500/14 text-[var(--rc-warn)]', bad: 'bg-orange-600/12 text-[var(--rc-bad)]', muted: 'bg-[var(--cds-alpha-1)] text-ink-secondary' }[tone];
+  const dotClass = { ok: 'bg-[var(--rc-ok)]', warn: 'bg-[var(--rc-warn)]', bad: 'bg-[var(--rc-bad)]', muted: 'bg-ink-muted' }[tone];
+  const detail = catalog?.directory_error?.message ?? catalogError;
+  const title = [`模型服务 · 凭据：${credential}`, `目录：${directory}${detail ? `（${detail}）` : ''}`, '生成结果见各次运行状态', '点击打开模型设置'].join('\n');
+  return (
+    <button type="button" onClick={() => setDialogs({ settings: true })} title={title} aria-label={`模型服务：${credential}，${directory}。打开模型设置`} data-testid="model-status"
+      className={`rc-focus-ring inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full p-1.5 text-[11px] font-medium lg:px-2.5 lg:py-1 ${toneClass}`}>
+      <span className={`size-2 rounded-full ${dotClass}`} aria-hidden="true" />
+      <span className="hidden lg:inline">模型 · {credential} · {directory}</span>
+    </button>
   );
 }
 
@@ -73,6 +113,7 @@ function Header() {
       <div className="ml-auto flex items-center gap-1.5 md:ml-0">
         <Button size="icon-sm" variant="ghost" className="md:hidden" aria-label="检索" icon={<SearchIcon width={18} height={18} />} onClick={() => setDialogs({ search: true })} />
         <ConnectionPill />
+        <ModelStatus />
         <Button size="sm" variant="ghost" className="hidden sm:inline-flex" icon={<ImportIcon width={16} height={16} />} onClick={() => fileInput.current?.click()}>导入</Button>
         <input ref={fileInput} type="file" multiple hidden data-testid="file-input"
           onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void importFiles(files, { place: view.type === 'canvas' }); }} />
