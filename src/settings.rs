@@ -25,6 +25,7 @@ fn header(name: &str, value: &str) -> Result<(HeaderName, HeaderValue)> {
 
 impl ProviderRuntime {
     pub fn new(mut provider: Provider, revision: u64) -> Result<Self> {
+        provider.vision_models.retain(|model| provider.allowed_models.contains(model));
         provider.base_url = provider.base_url.trim().trim_end_matches('/').to_owned();
         let url = reqwest::Url::parse(&provider.base_url).map_err(|_| ApiError::invalid("请填写完整的 HTTP 或 HTTPS API 基础地址"))?;
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
@@ -60,6 +61,45 @@ impl ProviderRuntime {
         self.provider.api_key_environment.is_none() || self.key.is_some()
     }
 
+    pub fn credential_source(&self) -> &'static str {
+        if self.provider.api_key.is_some() { "saved" }
+        else if self.provider.api_key_environment.is_some() { "environment" }
+        else if self.provider.headers.keys().any(|name| name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("x-api-key")) { "headers" }
+        else { "none" }
+    }
+
+    pub fn transport_error(&self, error: reqwest::Error) -> ApiError {
+        use std::error::Error;
+        let mut original = error.to_string();
+        let mut source = error.source();
+        while let Some(cause) = source {
+            original.push_str(&format!(": {cause}"));
+            source = cause.source();
+        }
+        let cause = original.to_ascii_lowercase();
+        let (kind, message) = if error.is_timeout() {
+            ("timeout", "模型服务请求超时，请检查服务响应与网络连接")
+        } else if cause.contains("certificate") || cause.contains("tls") {
+            ("tls", "模型服务 TLS 连接失败，请检查证书与 HTTPS 配置")
+        } else if cause.contains("dns") || cause.contains("name resolution") || cause.contains("lookup address") {
+            ("dns", "模型服务域名解析失败，请检查地址与 DNS 配置")
+        } else if error.is_connect() {
+            ("connection", "无法连接模型服务，请检查地址、端口与服务运行状态")
+        } else if error.is_decode() {
+            ("response_format", "模型服务响应格式无效，请检查 API 基础地址")
+        } else {
+            ("transport", "模型服务数据传输失败，请检查网络与服务状态")
+        };
+        self.failure(kind, message, original)
+    }
+
+    pub fn failure(&self, kind: &str, message: &str, original: impl std::fmt::Display) -> ApiError {
+        let mut error = self.error(original);
+        error.details = json!({"kind":kind,"original":error.message});
+        error.message = message.to_owned();
+        error
+    }
+
     pub fn request(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder> {
         if !self.credentials_available() {
             return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "provider_not_configured", "请配置模型服务 API 密钥"));
@@ -82,10 +122,7 @@ impl ProviderRuntime {
 
     pub fn view(&self) -> Value {
         let provider = &self.provider;
-        let source = if provider.api_key.is_some() { "saved" }
-            else if provider.api_key_environment.is_some() { "environment" }
-            else if provider.headers.keys().any(|name| name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("x-api-key")) { "headers" }
-            else { "none" };
+        let source = self.credential_source();
         let mut header_names = provider.headers.keys().collect::<Vec<_>>();
         header_names.sort();
         json!({"revision":self.revision,"protocol":provider.protocol,"base_url":provider.base_url,
@@ -154,8 +191,8 @@ pub struct ProviderUpdate {
     pub expected_revision: u64,
     #[serde(flatten)] pub connection: ConnectionInput,
     pub default_model: String,
-    #[serde(default)] pub allowed_models: Vec<String>,
-    #[serde(default)] pub vision_models: Vec<String>,
+    pub allowed_models: Option<Vec<String>>,
+    pub vision_models: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -177,9 +214,9 @@ pub async fn save(State(state): State<AppState>, Json(input): Json<ProviderUpdat
     }
     let mut provider = input.connection.apply(&active.provider);
     provider.default_model = input.default_model.trim().to_owned();
-    provider.allowed_models = input.allowed_models;
+    if let Some(models) = input.allowed_models { provider.allowed_models = models; }
     if !provider.allowed_models.contains(&provider.default_model) { provider.allowed_models.push(provider.default_model.clone()); }
-    provider.vision_models = input.vision_models;
+    if let Some(models) = input.vision_models { provider.vision_models = models; }
     validate_models(&provider)?;
     let next = ProviderRuntime::new(provider, active.revision + 1)?;
     let encoded = toml::to_string(&SavedProvider { revision: next.revision, provider: next.provider.clone() }).map_err(ApiError::internal)?;

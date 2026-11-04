@@ -13,19 +13,27 @@ use crate::{AppState, RunControl, config::Protocol, db, error::{ApiError, Result
 async fn check_response(response: reqwest::Response, runtime: &ProviderRuntime) -> Result<reqwest::Response> {
     if response.status().is_success() { return Ok(response); }
     let status = response.status();
-    let body = response.text().await.map_err(|error| runtime.error(error))?;
+    let body = response.text().await.map_err(|error| runtime.transport_error(error))?;
     let message = serde_json::from_str::<Value>(&body).ok().and_then(|value| value.pointer("/error/message").and_then(Value::as_str).map(str::to_owned));
-    Err(runtime.error(format!("模型服务 HTTP {status}：{}", message.unwrap_or_else(|| "请检查服务状态和模型配置".into()))))
+    let (kind, description) = match status.as_u16() {
+        401 | 403 => ("authentication", "模型服务认证失败，请检查密钥、客户端标记与访问权限"),
+        404 => ("endpoint", "模型服务接口地址不存在，请检查 API 基础地址与协议"),
+        429 => ("rate_limit", "模型服务请求额度或频率受限，请检查服务额度后重试"),
+        _ => ("http", "模型服务返回错误，请查看服务状态与错误详情"),
+    };
+    let mut error = runtime.failure(kind, description, message.unwrap_or(body));
+    error.details["upstream_status"] = json!(status.as_u16());
+    Err(error)
 }
 
 pub async fn fetch_models(runtime: &ProviderRuntime) -> Result<Vec<Value>> {
-    let response = runtime.request(reqwest::Method::GET, "/models")?.send().await.map_err(|error| runtime.error(error))?;
+    let response = runtime.request(reqwest::Method::GET, "/models")?.send().await.map_err(|error| runtime.transport_error(error))?;
     let response = check_response(response, runtime).await?;
-    let data: Value = response.json().await.map_err(|error| runtime.error(error))?;
-    let items = data.get("data").and_then(Value::as_array).ok_or_else(|| runtime.error("模型目录需要提供 data 数组"))?;
+    let data: Value = response.json().await.map_err(|error| runtime.transport_error(error))?;
+    let items = data.get("data").and_then(Value::as_array).ok_or_else(|| runtime.failure("response_format", "模型服务响应格式无效，请检查 API 基础地址", "模型目录需要提供 data 数组"))?;
     Ok(items.iter().filter_map(|item| {
         item.get("id").and_then(Value::as_str)
-            .map(|id| json!({"id":id, "name":item.get("name").and_then(Value::as_str).unwrap_or(id), "context_length":item.get("context_length").or_else(|| item.get("context_window"))}))
+            .map(|id| json!({"id":id, "name":item.get("name").and_then(Value::as_str).unwrap_or(id), "available":true, "context_length":item.get("context_length").or_else(|| item.get("context_window"))}))
     }).collect())
 }
 
@@ -37,9 +45,15 @@ pub async fn models(State(state): State<AppState>) -> Result<Json<Value>> {
             if timestamp.elapsed().as_secs() < runtime.provider.models_cache_seconds { return Ok(Json(value.clone())); }
         }
     }
-    let mut items = fetch_models(&runtime).await?;
-    items.retain(|item| runtime.provider.allowed_models.iter().any(|allowed| item["id"].as_str() == Some(allowed.as_str())));
-    let value = json!({"models":items,"default_model":runtime.provider.default_model});
+    let (directory, directory_error) = match fetch_models(&runtime).await {
+        Ok(items) => (Some(items), Value::Null),
+        Err(error) => (None, json!({"code":error.code,"message":error.message,"details":error.details})),
+    };
+    let items: Vec<Value> = runtime.provider.allowed_models.iter().map(|id| {
+        directory.as_ref().and_then(|items| items.iter().find(|item| item["id"].as_str() == Some(id.as_str())))
+            .cloned().unwrap_or_else(|| json!({"id":id,"name":id,"context_length":null,"available":directory.as_ref().map(|_| false)}))
+    }).collect();
+    let value = json!({"models":items,"default_model":runtime.provider.default_model,"directory_error":directory_error});
     *runtime.models.write().await = Some((Instant::now(), value.clone()));
     Ok(Json(value))
 }
@@ -113,7 +127,7 @@ async fn generate(runtime: &ProviderRuntime, context: &Context, run: &mut Run, c
     }
     let response = runtime.request(reqwest::Method::POST, path)?
         .json(&body)
-        .send().await.map_err(|error| runtime.error(error))?;
+        .send().await.map_err(|error| runtime.transport_error(error))?;
     let response = check_response(response, runtime).await?;
     let mut stream = response.bytes_stream().eventsource();
     let mut last_publish = Instant::now();

@@ -10,7 +10,7 @@ project_page_size = 200
 [provider]
 protocol = "anthropic_messages"
 base_url = "http://127.0.0.1:43177/v1"
-# 本机客户端匹配标记；上游 OAuth 凭据由 Router 管理。
+# Router 按 router-local-client 选择客户端通道，OAuth 凭据由 Router 管理。
 headers = { authorization = "Bearer router-local-client", anthropic-version = "2023-06-01" }
 default_model = "cc/gemini-3.8-flash-high"
 allowed_models = ["cc/gemini-3.8-flash-high"]

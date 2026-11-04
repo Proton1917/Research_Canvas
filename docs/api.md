@@ -4,7 +4,11 @@
 
 ## 配置与错误
 
-`GET /api/health` 返回服务、数据库和凭据配置状态。`provider_configured` 表示本服务具备配置要求的客户端凭据；Router 的 OAuth 授权及模型可用性通过实际请求确认。`GET /api/models` 返回经过允许列表过滤的模型目录与默认模型。当前通道为本机 Router OAuth，模型标识 `cc/gemini-3.8-flash-high`。前端模型选择来自该目录。
+`GET /api/health` 返回服务、数据库和凭据配置状态。`provider_configured` 表示本服务具备配置要求的客户端凭据，`credential_source` 与设置接口同为 `saved | environment | headers | none`。`none` 表示本应用发送请求时采用免凭据配置，服务端是否接受由实际请求确定。Router 的 OAuth 授权及模型可用性通过实际请求确认。
+
+`GET /api/models` 以配置中的启用列表为选择范围，返回 `models`、`default_model` 和 `directory_error`。每项提供 `id`、`name`、`context_length` 和 `available`。`available: true` 表示上游目录列出了该模型，`false` 表示目录读取成功但缺少该 ID，`null` 表示目录读取失败、状态待确认。三种状态均可选择，运行接口按启用列表接收模型。目录读取失败时该接口仍返回 HTTP 200，`directory_error` 为 `{code,message,details}`，成功时为 null。目录结果及失败状态沿用 `models_cache_seconds` 的缓存周期，保存设置后切换缓存。连接测试直接读取候选服务目录。
+
+当前通道为本机 Router OAuth，模型标识 `cc/gemini-3.8-flash-high`。前端展示目录读取状态与具体错误，实际生成结果由运行接口确认。
 
 `GET /api/capabilities` 返回 `api_version:2`、`scene_context:1`、`frozen_inheritance:true`、`canvas_proposals:2`、`canvas_proposal_recovery:1`、`claim_reviews:1`、`claim_research_plan:1` 和 `relation_endpoints:1`。`canvas_proposals` 在服务缺少 `canvas` 提示词配置时为 0。未知 `/api` 路径返回 JSON 404。场景与画布提案的完整调用约定见 [后端联调接口](backend-integration.md)。
 
@@ -52,7 +56,9 @@ type ConnectionTestResult = {
 
 `api_key` 省略时，同一地址和协议沿用已配置凭据。空字符串清除密钥及对应环境变量引用、认证请求头。非空字符串替换密钥，并按所选协议生成认证请求头。地址或协议变化时，认证来自本次输入。`headers` 省略时沿用同一连接的自定义头，提供对象时替换整组自定义头，同时提供 `api_key` 时由密钥字段确定认证头。
 
-连接测试读取候选配置的模型目录，当前已保存配置保持独立。`connected: true` 表示取得了目录，`model_available` 表示指定模型是否在该目录中，省略 `model` 时为 null。此操作验证接口、认证和目录读取，实际模型生成通过运行接口执行。请求失败返回 502 `provider_error`，配置语法错误返回 422，凭据环境变量缺失返回 503。
+连接测试读取候选配置的模型目录，当前已保存配置保持独立。`connected: true` 表示取得了目录，`model_available` 表示指定模型是否在该目录中，省略 `model` 时为 null。目录中的每项具有 `available: true`。此操作验证当前凭据下的目录读取，服务端客户端识别和实际模型生成分别由路由约定与运行接口确认。请求失败返回 502 `provider_error`，配置语法错误返回 422，凭据环境变量缺失返回 503。
+
+模型服务的网络与 HTTP 错误以中文 `message` 展示分类，`details.original` 保存脱敏并截断后的原始原因，HTTP 错误另提供 `details.upstream_status`。`details.kind` 包括 `connection`、`timeout`、`tls`、`dns`、`authentication`（401/403）、`endpoint`（404）、`rate_limit`（429）、`http`、`response_format` 和 `transport`。TLS、DNS 按传输库暴露的原因识别，其余连接问题归为 `connection`。上游目录失败时，同一错误结构保存在 `directory_error` 中。
 
 保存输入在 `ProviderConnection` 基础上增加以下字段。
 
@@ -65,13 +71,15 @@ type ProviderSettingsUpdate = ProviderConnection & {
 };
 ```
 
-默认模型自动加入启用列表，`vision_models` 由用户指定支持图像的模型。保存成功返回新的读取结果。修订号过期返回 409 `settings_conflict`，`details.current_revision` 提供当前修订号。前端保留表单，并由用户选择载入当前设置或按新修订号再次保存。
+`allowed_models` 和 `vision_models` 省略时沿用当前列表，显式空数组表示清空。默认模型自动加入启用列表，图像模型最终取启用列表的交集，启动载入和设置保存采用同一约定。启用列表是模型选择和图像能力的共同范围。保存成功返回新的读取结果。修订号过期返回 409 `settings_conflict`，`details.current_revision` 提供当前修订号。前端保留表单，并由用户选择载入当前设置或按新修订号再次保存。
 
 保存操作独立于连接测试，上游暂时离线时也可保存配置。服务在持久化成功后切换模型客户端和目录缓存，新请求立即采用新配置。正在进行的模型运行持有启动时的配置快照，并按该协议接收流式回答。保存后，前端重新取得 `/health`、`/models` 和 `/capabilities`，更新默认模型、启用列表和图像能力。
 
 初始配置来自 `RC_CONFIG` 指定文件，缺省为 `config/server.toml`。设置保存在同目录、以 `.local.toml` 结尾的文件，缺省为 `config/server.local.toml`。启动时该文件中的完整 provider 配置覆盖初始 provider。文件通过临时文件原子替换，Unix 权限为 0600，Windows 继承应用目录的访问权限。保存的是本机配置文件中的密钥文本，工作区归档继续保存研究数据。
 
 2026-11-03 执行 `conda run --no-capture-output -n base python tests/provider_settings_acceptance.py`，使用独立数据库及实际 Router OAuth `cc/gemini-3.8-flash-high`。验证覆盖草稿连接测试、保存与重启恢复、修订号冲突、离线错误、目录缓存切换、密钥沿用与清除、归档中的凭据隔离。Chat Completions 运行创建后切换至 Messages，前后两个运行均成功生成带来源引用的回答，返回模型为 `gemini-3.8-flash-n`。结果保存在 `.runtime/provider-settings/result.json`。协议调用的本轮验证范围为该 Router 通道。
+
+`tests/provider_catalog_acceptance.py` 使用独立数据库验证列表省略与清空、图像模型交集、实际 Router 目录中的已列出与缺项状态、本机关闭端口的离线目录及中文错误、真实 API 404 分类、凭据来源、设置 smoke 和重启恢复。本轮结果为 `.runtime/provider-catalog/run-yjje44gl/result.json`。TLS、DNS、超时、401/403 和 429 分支的实现随构建通过，运行验收范围为连接失败与 404。发行 smoke 的设置检查在本机执行通过，各平台原生执行由后续发行工作流完成。
 
 ## 文稿与版本
 

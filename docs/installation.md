@@ -85,6 +85,8 @@ Fedora 可使用 `sudo dnf install poppler-utils`。其他发行版从系统软�
 
 使用这组配置时，先启动自己的 Router 服务并完成相应 OAuth 登录，再启动 Research Canvas。Router 是独立的模型服务，发行包中的客户端标记用于本机请求匹配；OAuth 登录由 Router 管理。
 
+本机 Router 的客户端标记为 `router-local-client`。示例配置通过 `Authorization: Bearer router-local-client` 提供该标记。设置页重新填写 API Key 时填入 `router-local-client`，应用按协议发送 Bearer Authorization 或 `x-api-key`。保留默认配置时沿用已有请求头。该标记用于选择 Router 客户端通道，OAuth 凭据由 Router 保管。清除或改变标记可能改变 Router 选择的通道，连接测试取得目录后应核对其中的 `cc/…` 模型及所选模型状态。
+
 使用其他已有的模型服务时，可在页面顶栏点击“设置”（窄屏为齿轮图标），在“模型服务”中操作：
 
 1. 选择协议：Chat Completions 或 Anthropic Messages。

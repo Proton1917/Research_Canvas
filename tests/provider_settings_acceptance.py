@@ -100,7 +100,9 @@ def verify(service):
     assert service.request('GET', '/settings/provider') == saved
     offline_saved = service.request('PUT', '/settings/provider', json={**offline, 'expected_revision': saved['revision'], 'default_model': MODEL})
     assert not offline_saved['api_key_configured'] and offline_saved['credential_source'] == 'none'
-    service.request('GET', '/models', expected=502)
+    offline_catalog = service.request('GET', '/models')
+    assert offline_catalog['models'][0]['available'] is None
+    assert offline_catalog['directory_error']['code'] == 'provider_error'
     saved = service.request('PUT', '/settings/provider', json={**connection, 'expected_revision': offline_saved['revision'], 'default_model': MODEL, 'vision_models': [MODEL]})
     assert service.request('GET', '/capabilities')['vision_models'] == [MODEL]
 

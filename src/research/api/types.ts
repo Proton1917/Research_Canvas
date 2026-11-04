@@ -324,11 +324,14 @@ export type Health = {
   api_version: number;
   database: string;
   provider_configured: boolean;
+  credential_source: ProviderSettings['credential_source'];
   default_model: string;
 };
 
 export type ModelEntry = {
   id: string;
+  /** 上游目录已列出为 true，目录缺项为 false，读取失败为 null。 */
+  available?: boolean | null;
   name?: string;
   context_length?: number | null;
   [key: string]: unknown;
@@ -337,6 +340,7 @@ export type ModelEntry = {
 export type ModelCatalog = {
   default_model: string;
   models: ModelEntry[];
+  directory_error: { code: string; message: string; details: unknown } | null;
   [key: string]: unknown;
 };
 
@@ -368,7 +372,9 @@ export type ProviderSettings = {
 export type ProviderSettingsUpdate = ProviderConnection & {
   expected_revision: number;
   default_model: string;
+  /** 省略沿用当前列表，空数组清空后加入默认模型。 */
   allowed_models?: string[];
+  /** 省略沿用当前列表，空数组清空，最终取启用列表的交集。 */
   vision_models?: string[];
 };
 

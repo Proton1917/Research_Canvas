@@ -58,6 +58,20 @@ def import_file(base, workspace_id, path, media_type):
     return http(base, "POST", f"/api/workspaces/{workspace_id}/imports", body, f"multipart/form-data; boundary={boundary}", 201)
 
 
+def verify_provider_settings(base, configuration):
+    current = http(base, "GET", "/api/settings/provider")
+    payload = {key: current[key] for key in ("protocol", "base_url", "default_model", "allowed_models", "vision_models")}
+    saved = http(base, "PUT", "/api/settings/provider", {**payload, "expected_revision": current["revision"]})
+    assert saved["revision"] == current["revision"] + 1
+    assert {key: saved[key] for key in payload} == payload
+    assert http(base, "GET", "/api/settings/provider") == saved
+    local_file = configuration.with_suffix(".local.toml")
+    persisted = tomllib.loads(local_file.read_text(encoding="utf-8"))
+    assert persisted["revision"] == saved["revision"]
+    if os.name != "nt":
+        assert local_file.stat().st_mode & 0o777 == 0o600
+
+
 def verify(path, platform):
     temporary_root = ROOT / "tmp/release-smoke"
     temporary_root.mkdir(parents=True, exist_ok=True)
@@ -107,6 +121,7 @@ def verify(path, platform):
                         time.sleep(0.2)
                 assert health["database"] == "ready"
                 assert (bundle / "config/server.toml").exists()
+                verify_provider_settings(base, configuration)
                 html = http(base, "GET", "/").decode("utf-8")
                 assert "Research Canvas" in html
                 assets = Assets()
@@ -135,7 +150,7 @@ def verify(path, platform):
                     process.kill()
                     process.wait(timeout=10)
     record = ROOT / ".runtime/releases" / f"verification-{platform}.json"
-    record.write_text(json.dumps({"platform": platform, "runtime": runtime_platform.platform(), "version": version, "source_commit": source_commit, "archive": path.name, "status": "passed", "checks": ["launcher", "configuration", "web_assets", "capabilities", "markdown_import", "pdf_import", "json_export", "zip_export", "graceful_shutdown"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    record.write_text(json.dumps({"platform": platform, "runtime": runtime_platform.platform(), "version": version, "source_commit": source_commit, "archive": path.name, "status": "passed", "checks": ["launcher", "configuration", "provider_settings", "web_assets", "capabilities", "markdown_import", "pdf_import", "json_export", "zip_export", "graceful_shutdown"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(record)
 
 
