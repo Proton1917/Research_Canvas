@@ -132,12 +132,31 @@ Vite 开发代理从 `config/server.toml`（缺失时用 `config/server.example.
   - 每次打开调用 `api.providerSettings()`，记录 `revision`，按 `credential_source` 与 `api_key_configured` 显示凭据状态（已保存密钥、环境变量提供或未设置、认证请求头、未配置），API Key 输入框留空。关闭时表单与其中的密钥一并丢弃；有未保存修改时先确认。
   - 凭据：输入框为空时省略 `api_key` 沿用已有凭据；输入新值时提交新值；“清除已保存的密钥／清除认证请求头”后提交空字符串，可撤销。协议或地址与已保存值不同时提示重新提供认证信息，已保存的密钥和请求头不沿用。保存完成后表单按服务返回值重建，密钥值清空。
   - 高级请求头：读取结果只显示名称；“修改请求头”按已保存名称生成待填写取值的行，“清空请求头”提交空对象，提交时以完整对象替换；不修改时省略 `headers`。名称为空、取值为空或重名时阻止提交。
-  - 模型：默认模型输入框可直接填写准确 ID，并从目录候选中选择；目录表格的行顺序固定为已保存模型、目录条目、手动添加，逐行选择默认、启用与读取图像。默认模型自动启用，取消启用同时取消图像；`vision_models` 提交启用模型中的子集，`allowed_models` 始终完整提交。
-  - 连接测试使用当前表单（含 `model` = 默认模型），显示取得的模型数及默认模型是否在目录中；失败时显示服务返回的信息。表单在测试后变化时标注结果对应修改前的配置。保存独立于连接测试。
-  - 保存使用读取时的修订号。成功后关闭设置并调用 `refreshProviderState`：重新请求 `/health`、`/models`、`/capabilities`，讨论与画布提问共用的模型选择在新目录中时保留，否则采用新默认模型；目录读取失败时按保存的启用列表判断。409 `settings_conflict` 保留表单，提示当前修订号，提供“载入当前设置”和“按修订 N 再次保存”；保存失败或冲突提示出现时滚动到可见位置。
+  - 模型：默认模型输入框可直接填写准确 ID，并从目录候选中选择；目录表格的行顺序固定为已保存模型、目录条目、手动添加，逐行选择默认、启用与读取图像。默认模型自动启用，取消启用同时取消图像；`vision_models` 提交启用模型中的子集，`allowed_models` 始终完整提交（后端约定省略即沿用、空数组即清空，图像模型取启用列表交集），保存后表单与图像能力以响应为准。未测试时，表格按已保存配置的目录状态标注“目录中未找到”（`available: false`）或“未能确认”（`null`）；测试后以候选目录为准。
+  - 连接测试使用当前表单（含 `model` = 默认模型），显示取得的模型数及默认模型是否在目录中；失败时以服务返回的中文 `message` 为主提示，`ProviderErrorDetails` 在可展开区域列出 `details.kind` 分类、`details.upstream_status` 与脱敏的 `details.original`，保存失败采用同一显示。表单在测试后变化时标注结果对应修改前的配置。保存独立于连接测试。
+  - 保存使用读取时的修订号。成功后关闭设置并调用 `refreshProviderState`：重新请求 `/health`、`/models`、`/capabilities`，讨论与画布提问共用的模型选择仍在启用列表（`/models` 返回的全部启用模型）中时保留，否则采用新默认模型；`/models` 请求本身失败时按保存的启用列表判断。409 `settings_conflict` 保留表单，提示当前修订号，提供“载入当前设置”和“按修订 N 再次保存”；保存失败或冲突提示出现时滚动到可见位置。
   - 讨论框在服务未配置凭据或模型目录读取失败时提供打开设置的入口。
+- **模型目录状态与凭据来源**：`/api/models` 按启用列表返回全部模型，`loadModels` 在 HTTP 200 时同样读取 `directory_error`。
+  - 讨论框模型选项全部可选，`available: false` 标注“目录中未找到”，`null` 标注“未能确认”；`directory_error` 显示为“模型目录读取失败：<message>”，并附可展开的详细原因与设置入口。所选模型目录中未找到时，另提示仍可发送、生成结果以运行状态为准。设置页顶部同时显示当前配置的目录读取错误。
+  - 顶栏分为两项：“服务在线”表示本地服务与数据库可用；“模型 · <凭据> · <目录>”按 `/health` 的 `provider_configured` 与 `credential_source`（密钥已保存、环境变量密钥、请求头认证、免凭据配置；环境变量缺失时为“密钥环境变量未设置”）和 `/models` 的目录状态（目录已确认、目录读取失败、所选模型未在目录、目录请求失败）显示，点击打开设置。生成结果由各次运行展示。窄屏只显示两个状态点，文字放在读屏标签与悬停说明中。
 
 ## 验证记录
+
+### 2026-11-04 模型目录状态、凭据来源与中文错误
+
+在 8807 独立实例上验证：后端为 `.runtime/bin/research-canvas` 当前构建（含 `645160b`），数据库为 `.runtime/frontend-issues.sqlite3` 的副本（含图像提问画布“P1 图片文稿 234525”），配置在 `tmp/catalog-status-ui/server.toml`。初始 provider 为 Router、Anthropic Messages、认证请求头和 `cc/gemini-3.8-flash-high`。本会话没有可用的内置浏览器工具，使用 Playwright 驱动的 Chrome 执行真实点击与输入。脚本 `c1_catalog.py`、结果 `c1.json` 和截图 `shots/` 位于 `tmp/catalog-status-ui/`，页面错误为 0。前端类型检查与生产构建通过。
+
+已验证（1440×900，除注明外）：
+- **顶栏**：初始为“服务在线”和“模型 · 请求头认证 · 目录已确认”，`/health` 的 `credential_source` 为 `headers`。
+- **缩小启用列表后的图像提示**：测试 Router 目录后启用 `cc/deepseek-flash` 与 `cc/grok-4.7`（后者读取图像）并保存为修订 1，`capabilities.vision_models` 为 Gemini 与 Grok。讨论框选择 DeepSeek，在图像画布选中卡片、向 AI 提问并勾选“以图像读取”，提示“当前模型 cc/deepseek-flash 不读取图像”，可改用 Gemini 或 Grok。取消启用 Grok 保存为修订 2：提交与响应的 `vision_models` 均为 Gemini，`/capabilities` 同步，同一提问面板的提示只剩“改用 cc/gemini-3.8-flash-high”。
+- **手填目录缺项模型**：手动添加 `cc/manual-missing-id` 保存为修订 3，`/api/models` 返回其 `available: false`。讨论框选项显示“cc/manual-missing-id · 目录中未找到”，选中后提示仍可发送；顶栏为“所选模型未在目录”；重新打开设置，该行标注“目录中未找到”。
+- **连接失败**：地址改为本机关闭端口 `127.0.0.1:43999/v1`，出现重新认证提示；测试显示“连接测试失败 / 无法连接模型服务，请检查地址、端口与服务运行状态”，展开“详细原因 · 连接失败”为 `tcp connect error: Connection refused (os error 61)`，表单地址与 3 个模型行保留。
+- **保存离线地址与免凭据配置**：保存为修订 4（地址变化后未填写密钥），`/health` 为 `provider_configured: true`、`credential_source: none`，设置页凭据为“未配置密钥”，顶栏为“模型 · 免凭据配置 · 目录读取失败”。`/api/models` 返回 HTTP 200，3 个启用模型均为 `available: null`，`directory_error.details.kind` 为 `connection`。讨论框 3 个选项均标“未能确认”并可切换，目录读取原因及详细原因可展开；设置页顶部显示同一原因，各行标“未能确认”。保存提示为“模型设置已保存（修订 4），讨论与画布提问使用 cc/manual-missing-id。模型目录读取失败：……”，当前选择因仍在启用列表中而保留。
+- **HTTP 错误分类**：带 `router-local-client` 标记测试 Router 的 `/v2` 路径，Router 返回 502（`request path is not configured in server.endpoints`，未转发上游），界面显示“模型服务返回错误，请查看服务状态与错误详情”，详细原因为“HTTP 错误 · HTTP 502”。
+- **恢复 Router 并讨论**：Anthropic Messages、Router 地址、Router 密钥测试后只启用 Gemini，保存为修订 5，顶栏为“模型 · 密钥已保存 · 目录已确认”，讨论框只剩 Gemini。发送一次讨论，请求模型 `cc/gemini-3.8-flash-high`，运行成功，返回模型 `gemini-3.8-flash-n`。
+- **窄屏**（390×844，离线状态）：页面宽度 390，顶栏为服务与模型两个状态点（读屏标签“模型服务：免凭据配置，目录读取失败”）；研究面板中目录读取原因分两行完整显示，详细原因在 358px 宽的输入区内换行可读，模型选项可选；设置对话框宽 358px，顶部显示目录读取原因和展开的详细原因。
+
+实测中修正：后端 `message` 不带句末标点，与界面补充说明连读，现在补全标点；HTTP 错误时测试结果标题原为“连接失败”，改为“连接测试失败”。TLS、DNS、超时、401/403、429 分支未构造实际场景，界面按同一 `details.kind` 显示。
 
 ### 2026-11-03 设置 → 模型服务
 

@@ -1097,6 +1097,72 @@
       "evidence": "observed",
       "state": "390×844：顶栏设置图标可见，对话框宽 358px，页面宽度保持 390；表单单列显示，底部为取消、测试连接并读取模型、保存",
       "evidenceNote": "2026-11-03 在 8805 独立实例（.runtime/bin/research-canvas 当前构建，8790 验收库副本，设置写入 tmp/provider-settings-ui/server.local.toml）用 Playwright 驱动 Chrome 实测；Router 为本机 127.0.0.1:43177，密钥替换与清除在本机模拟服务 127.0.0.1:43901 上验证；脚本与结果在 tmp/provider-settings-ui/。"
+    },
+    {
+      "id": "vision_narrowed",
+      "title": "缩小启用列表后的图像提示",
+      "image": "screenshots/vision_narrowed-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "讨论框选非图像模型 cc/deepseek-flash，画布提问勾选以图像读取。启用 Gemini 与 Grok 时提示可改用两者；取消启用 Grok 保存后，图像模型取启用列表交集，提示只剩“改用 cc/gemini-3.8-flash-high”",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
+    },
+    {
+      "id": "model_missing",
+      "title": "目录中未找到的模型",
+      "image": "screenshots/model_missing-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "手动添加 cc/manual-missing-id 保存后，/api/models 返回 available: false。讨论框选项标“目录中未找到”并可选择，选中后提示仍可发送、生成结果以运行状态为准；顶栏为“所选模型未在目录”",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
+    },
+    {
+      "id": "test_fail_details",
+      "title": "连接测试失败的中文原因",
+      "image": "screenshots/test_fail_details-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "本机关闭端口：主提示“无法连接模型服务，请检查地址、端口与服务运行状态”，展开“详细原因 · 连接失败”显示脱敏原始原因；表单保留",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
+    },
+    {
+      "id": "directory_offline",
+      "title": "目录读取失败仍可选择",
+      "image": "screenshots/directory_offline-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "page",
+      "evidence": "observed",
+      "state": "保存离线地址后 /api/models 仍返回 HTTP 200，启用模型均为 available: null。讨论框选项标“未能确认”并可切换，显示目录读取原因与可展开的详细原因；顶栏为“服务在线”与“模型 · 免凭据配置 · 目录读取失败”",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
+    },
+    {
+      "id": "settings_offline",
+      "title": "设置页的目录读取状态",
+      "image": "screenshots/settings_offline-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "dialog",
+      "evidence": "observed",
+      "state": "设置页顶部显示当前配置的目录读取原因，凭据为“未配置密钥”，模型行标“未能确认”，仍可选择默认、启用与图像模型",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
+    },
+    {
+      "id": "directory_offline_narrow",
+      "title": "窄屏目录读取失败",
+      "image": "screenshots/directory_offline_narrow-image-0.png",
+      "group": "设置",
+      "route": "/",
+      "kind": "panel",
+      "evidence": "observed",
+      "state": "390×844：顶栏为服务与模型两个状态点；研究面板中目录读取原因与详细原因换行完整显示，模型选项可选，页面宽度 390",
+      "evidenceNote": "2026-11-04 在 8807 独立实例（.runtime/bin/research-canvas 当前构建，含 645160b；frontend-issues 验收库副本）用 Playwright 驱动 Chrome 实测；Router 请求使用 router-local-client，连接失败使用本机关闭端口 43999；脚本与结果在 tmp/catalog-status-ui/。"
     }
   ],
   "edges": [
@@ -1802,6 +1868,43 @@
       "action": "点击设置图标",
       "evidence": "observed",
       "back": "取消"
+    },
+    {
+      "from": "settings_saved",
+      "to": "vision_narrowed",
+      "action": "启用 Grok 后再取消启用并保存",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_saved",
+      "to": "model_missing",
+      "action": "手动添加模型 ID 并保存",
+      "evidence": "observed"
+    },
+    {
+      "from": "settings_test",
+      "to": "test_fail_details",
+      "action": "改为关闭端口后测试，展开详细原因",
+      "evidence": "observed"
+    },
+    {
+      "from": "test_fail_details",
+      "to": "directory_offline",
+      "action": "保存离线地址",
+      "evidence": "observed"
+    },
+    {
+      "from": "directory_offline",
+      "to": "settings_offline",
+      "action": "点击顶栏模型状态或设置",
+      "evidence": "observed",
+      "back": "取消"
+    },
+    {
+      "from": "directory_offline",
+      "to": "directory_offline_narrow",
+      "action": "390px 窄屏打开研究面板",
+      "evidence": "observed"
     }
   ],
   "pending": [
