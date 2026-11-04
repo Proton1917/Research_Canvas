@@ -2,6 +2,10 @@
 
 发行目标为 Windows x64 与 macOS Apple Silicon。GitHub Actions 的 `.github/workflows/release.yml` 使用 `platforms=desktop` 构建这两个目标。下载镜像提供安装包，Research Canvas 在用户本机运行。
 
+产品网站为 `https://mathana.homes/`，`#download` 提供下载入口，`#ai` 提供模型接入说明。页面源码位于 `site/index.html`，直接发布到 `/var/www/mathana-canvas/index.html`。该页面为独立静态 HTML，沿用内嵌样式与脚本。发行时同步首页、下载文件名、大小、链接、页脚源码提交和与产品版本相关的接入说明，并查看真实渲染及下载结果。
+
+2026-11-04 的 0.1.4 页面验收通过 Safari 查看桌面下载区与接入说明，以及 390 × 844 响应式视口。地址复制操作显示成功，窄屏 API 地址完整换行。页面脚本通过 `node --check`。从 `mathana.homes` 完整下载 Windows 和 macOS 安装包后，大小与传输摘要均与 GitHub 发行资产一致。截图及传输记录保存在 `tmp/mathana-release/`。
+
 ## 构建与发行
 
 在仓库根目录更新 Cargo.toml、Cargo.lock、package.json 及安装说明中的发行版本，提交集成代码后，手动触发发行工作流。记录构建对应的提交、工作流运行地址和两个原生平台的验收结果。工作流生成 `release-windows-x64` 与 `release-macos-arm64` artifacts，下载到项目 `.runtime/releases/<版本>/`。
@@ -19,7 +23,8 @@
 | 上传暂存目录 | `/home/ubuntu/mia-m1-stage/research-canvas-<版本>/` |
 | 公网文件目录 | `/var/www/matharc-resolve/downloads/research-canvas/<版本>/` |
 | 下载配置 | `/etc/nginx/snippets/research-canvas-downloads.conf` |
-| 站点配置 | `/etc/nginx/sites-available/matharc-resolve.conf` |
+| 产品站点配置 | `/etc/nginx/sites-available/mathana-canvas.conf` |
+| 兼容下载站点配置 | `/etc/nginx/sites-available/matharc-resolve.conf` |
 | 本地操作材料 | `.runtime/releases/server-downloads/` |
 
 连接使用 `IdentitiesOnly=yes`、`BatchMode=yes`、`StrictHostKeyChecking=yes`、`UpdateHostKeys=no`，维护命令使用 `sudo -n`。私钥通过上述路径引用，留在本机。站点还承载 `mia-m1.service`，下载配置只管理 Research Canvas 的静态 URL。
@@ -51,7 +56,7 @@ location = /downloads/research-canvas/0.1.3/research-canvas-0.1.3-macos-arm64.zi
 }
 ```
 
-下载地址采用 `https://resolve.matharc.space/downloads/research-canvas/<版本>/<文件名>`。实际传输因本机代理超时且已确认直连可用时，可使用 `curl --noproxy resolve.matharc.space --http1.1` 继续该次下载。
+产品网站的下载地址采用 `https://mathana.homes/downloads/research-canvas/<版本>/<文件名>`。`resolve.matharc.space` 的相同路径继续提供兼容下载。两个站点 include 同一个下载片段并读取同一份安装包。页面内容通过替换静态 HTML 生效，新增版本的下载路径通过片段更新和 Nginx reload 生效。实际传输因本机代理超时且已确认直连可用时，可使用 `curl --noproxy <下载域名> --http1.1` 继续该次下载。
 
 ## 发布撤回
 

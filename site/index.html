@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Research Canvas · 把文稿、公式和 AI 讨论放在同一张画布上</title>
+<meta name="description" content="Research Canvas 是在本机运行的科研画布：导入文稿与 PDF，标出片段，记录研究关系，AI 的改动先成为提案，确认后才写入。">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d97757'/%3E%3Cpath d='M9 22V10h7.5a4 4 0 0 1 0 8H9m7-0 5 4' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+  try {
+    var t = localStorage.getItem('rc:theme');
+    if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+  } catch (e) {}
+</script>
+<style>
+/* =========================================================
+   令牌：第 1 层原样取自 Research Canvas 0.1.2 产品样式表
+   (dist/assets/index-DjWUaX-V.css 的 --cds-* 与 --rc-*)，不改值。
+   第 2 层是本页只用到的间距、字号、版心，全部从这里取。
+   ========================================================= */
+:root {
+  color-scheme: light;
+  /* 产品令牌 · 浅色 */
+  --cds-surface-0: #f5f5f3;
+  --cds-surface-1: #fcfcfb;
+  --cds-surface-2: #ffffff;
+  --cds-surface-3: #ffffff;
+  --cds-clay: #d97757;
+  --cds-clay-hover: #cc5a36;
+  --cds-clay-light: #fbf3ef;
+  --cds-alpha-1: hsla(0, 0%, 8%, .05);
+  --cds-alpha-2: hsla(0, 0%, 8%, .1);
+  --cds-alpha-3: hsla(0, 0%, 8%, .2);
+  --cds-text-primary: #151515;
+  --cds-text-secondary: #525252;
+  --cds-text-muted: #8a8a8a;
+  --cds-shadow-color: rgba(0, 0, 0, .08);
+  --cds-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, .05), 0 2px 8px 0 var(--cds-shadow-color);
+  --cds-shadow-md: 0 2px 4px 0 rgba(0, 0, 0, .05), 0 6px 16px 0 var(--cds-shadow-color);
+  --cds-shadow-lg: 0 4px 8px 0 rgba(0, 0, 0, .06), 0 12px 28px -2px var(--cds-shadow-color);
+  --cds-segmented-track: rgba(0, 0, 0, .06);
+  --cds-segmented-thumb: #ffffff;
+  --rc-anchor: rgba(217, 119, 87, .22);
+  --rc-anchor-active: rgba(217, 119, 87, .42);
+  --rc-anchor-stale: rgba(234, 179, 8, .28);
+  --rc-ok: #2f8a5b;
+  --rc-warn: #b7791f;
+  --rc-bad: #c2410c;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px; --radius-2xl: 16px;
+  --pill: 999px;
+
+  /* 产品令牌的语义别名（与产品同名同义） */
+  --cds-border: var(--cds-alpha-2);
+  --cds-border-strong: var(--cds-alpha-3);
+  --cds-fill-brand: var(--cds-clay);
+  --cds-fill-brand-hover: var(--cds-clay-hover);
+  --cds-fill-brand-subtle: var(--cds-clay-light);
+  --cds-panel-shadow: 0 0 0 1px var(--cds-border), var(--cds-shadow-sm);
+  --cds-focus-shadow: inset 0 0 0 1px var(--cds-surface-1), 0 0 0 1.5px var(--cds-clay), 0 0 6px 1px rgba(217, 119, 87, .25);
+  --diff-del-fg: #b91c1c; --diff-del-bg: #f8717124;
+  --diff-ins-fg: #15803d; --diff-ins-bg: #4ade8024;
+
+  /* 本页令牌：字族与产品一致 */
+  --font-sans: Inter, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  --font-math: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif;
+  /* 字号阶梯（只用这 7 级） */
+  --fs-1: 12px; --fs-2: 13px; --fs-3: 15px; --fs-4: 17px; --fs-5: 22px; --fs-6: clamp(28px, 4.2vw, 40px); --fs-7: clamp(34px, 6.4vw, 64px);
+  /* 间距阶梯 */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 72px; --sp-9: 112px;
+  --page: 1160px;
+}
+.dark {
+  color-scheme: dark;
+  --cds-surface-0: #0b0b0a;
+  --cds-surface-1: #151515;
+  --cds-surface-2: #1a1a19;
+  --cds-surface-3: #20201e;
+  --cds-clay-hover: #e08264;
+  --cds-alpha-1: hsla(0, 0%, 100%, .05);
+  --cds-alpha-2: hsla(0, 0%, 100%, .09);
+  --cds-alpha-3: hsla(0, 0%, 100%, .18);
+  --cds-text-primary: #f5f5f5;
+  --cds-text-secondary: #a3a3a3;
+  --cds-text-muted: #666666;
+  --cds-shadow-color: rgba(0, 0, 0, .4);
+  --cds-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, .4), 0 2px 8px 0 var(--cds-shadow-color);
+  --cds-shadow-md: 0 2px 4px 0 rgba(0, 0, 0, .4), 0 6px 16px 0 var(--cds-shadow-color);
+  --cds-shadow-lg: 0 4px 8px 0 rgba(0, 0, 0, .5), 0 16px 36px -2px var(--cds-shadow-color);
+  --cds-segmented-track: rgba(255, 255, 255, .08);
+  --cds-segmented-thumb: #2c2c2a;
+  --cds-fill-brand-subtle: rgba(217, 119, 87, .15);
+  --cds-focus-shadow: inset 0 0 0 1px var(--cds-surface-1), 0 0 0 1.5px var(--cds-clay), 0 0 8px 2px rgba(217, 119, 87, .35);
+  --rc-anchor: rgba(217, 119, 87, .3);
+  --rc-anchor-active: rgba(217, 119, 87, .55);
+  --rc-anchor-stale: rgba(234, 179, 8, .3);
+  --rc-ok: #5cc28d; --rc-warn: #e0b04a; --rc-bad: #f08a5d;
+  --diff-del-fg: #fca5a5; --diff-del-bg: #f8717129;
+  --diff-ins-fg: #86efac; --diff-ins-bg: #4ade8024;
+}
+
+/* ---------- 基础 ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+  margin: 0; background: var(--cds-surface-0); color: var(--cds-text-primary);
+  font: 400 var(--fs-3)/1.65 var(--font-sans); -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+a { color: inherit; }
+h1, h2, h3, p { margin: 0; }
+.wrap { width: min(var(--page), 100% - 2 * var(--sp-5)); margin-inline: auto; }
+.math { font-family: var(--font-math); font-style: italic; font-size: 1.08em; white-space: nowrap; }
+.math .up { font-style: normal; }
+code, .mono { font-family: var(--font-mono); font-size: .92em; }
+:focus-visible { outline: none; box-shadow: var(--cds-focus-shadow); border-radius: var(--radius-md); }
+
+/* ---------- 按钮（全页只有这两种 + 幽灵） ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--sp-2); height: 44px; padding: 0 var(--sp-5);
+  border-radius: var(--radius-lg); border: 0; font: 600 var(--fs-3)/1 var(--font-sans); text-decoration: none;
+  cursor: pointer; user-select: none; white-space: nowrap; transition: background .15s, box-shadow .15s;
+}
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn-primary { background: var(--cds-fill-brand); color: #fff; box-shadow: var(--cds-shadow-sm); }
+.btn-primary:hover { background: var(--cds-fill-brand-hover); }
+.btn-secondary { background: var(--cds-surface-2); color: var(--cds-text-primary); box-shadow: var(--cds-panel-shadow); }
+.btn-secondary:hover { box-shadow: 0 0 0 1px var(--cds-border-strong), var(--cds-shadow-sm); }
+.btn-sm { height: 34px; padding: 0 var(--sp-3); font-size: var(--fs-2); border-radius: var(--radius-md); }
+.icon-btn {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--cds-text-secondary); cursor: pointer;
+}
+.icon-btn:hover { background: var(--cds-alpha-1); color: var(--cds-text-primary); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+/* ---------- 顶栏 ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 20; backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  background: color-mix(in srgb, var(--cds-surface-0) 82%, transparent); border-bottom: 1px solid transparent; transition: border-color .2s;
+}
+.nav.scrolled { border-bottom-color: var(--cds-border); }
+.nav .wrap { display: flex; align-items: center; gap: var(--sp-4); height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: var(--fs-3); text-decoration: none; letter-spacing: -.01em; }
+.brand-mark { width: 26px; height: 26px; flex: none; }
+.nav-links { display: flex; gap: var(--sp-1); margin-left: auto; }
+.nav-links a { padding: 6px 10px; border-radius: var(--radius-md); font-size: var(--fs-2); color: var(--cds-text-secondary); text-decoration: none; }
+.nav-links a:hover { background: var(--cds-alpha-1); color: var(--cds-text-primary); }
+.nav .btn-sm { margin-left: var(--sp-1); }
+
+/* ---------- 首屏 ---------- */
+.hero { position: relative; padding: var(--sp-8) 0 0; text-align: center; isolation: isolate; }
+.hero::before { /* 画布点阵，与产品画布同款 */
+  content: ""; position: absolute; inset: 0 0 30% 0; z-index: -1;
+  background-image: radial-gradient(var(--cds-alpha-3) 1px, transparent 1.2px); background-size: 20px 20px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 20%, #000 20%, transparent 75%);
+          mask-image: radial-gradient(ellipse 70% 80% at 50% 20%, #000 20%, transparent 75%);
+}
+.chip {
+  display: inline-flex; align-items: center; gap: var(--sp-2); padding: 5px 12px 5px 8px; border-radius: var(--pill);
+  background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); font-size: var(--fs-2); color: var(--cds-text-secondary);
+}
+.chip b { font-weight: 600; color: var(--cds-text-primary); }
+.chip .ver { padding: 1px 7px; border-radius: var(--pill); background: var(--cds-fill-brand-subtle); color: var(--cds-clay); font: 600 var(--fs-1)/1.6 var(--font-mono); }
+.hero h1 {
+  margin: var(--sp-5) auto 0; max-width: 15em; font-size: var(--fs-7); line-height: 1.12; font-weight: 700; letter-spacing: -.03em; text-wrap: balance;
+}
+.hero h1 em { font-style: normal; color: var(--cds-clay); }
+.nb { display: inline-block; }
+.hero .lede { margin: var(--sp-5) auto 0; max-width: 36em; font-size: var(--fs-4); color: var(--cds-text-secondary); text-wrap: pretty; }
+.cta { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-6); }
+.cta-note { margin-top: var(--sp-3); font-size: var(--fs-2); color: var(--cds-text-muted); }
+.cta-note a { color: var(--cds-text-secondary); }
+
+/* ---------- 视图切换（产品同款分段控件） ---------- */
+.seg {
+  display: inline-flex; gap: 2px; padding: 3px; margin: var(--sp-8) auto var(--sp-5); border-radius: var(--radius-lg);
+  background: var(--cds-segmented-track);
+}
+.seg button {
+  height: 32px; padding: 0 var(--sp-4); border: 0; border-radius: var(--radius-md); background: transparent;
+  font: 500 var(--fs-2)/1 var(--font-sans); color: var(--cds-text-secondary); cursor: pointer;
+}
+.seg button[aria-selected="true"] { background: var(--cds-segmented-thumb); color: var(--cds-text-primary); box-shadow: var(--cds-shadow-sm); font-weight: 600; }
+
+/* =========================================================
+   产品示意：结构照搬 Research Canvas 0.1.2 真实界面
+   （顶栏 / 左栏文稿与画布 / 中间点阵画布 / 右栏讨论面板）
+   ========================================================= */
+.stage { position: relative; width: min(1200px, 100% - 2 * var(--sp-5)); margin: 0 auto; }
+.app {
+  position: relative; border-radius: var(--radius-2xl); overflow: hidden; text-align: left;
+  background: var(--cds-surface-1); box-shadow: 0 0 0 1px var(--cds-border), var(--cds-shadow-lg), 0 40px 80px -40px rgba(0,0,0,.25);
+  font-size: var(--fs-2); line-height: 1.55;
+}
+.app-top { display: flex; align-items: center; gap: var(--sp-3); height: 44px; padding: 0 var(--sp-3); border-bottom: 1px solid var(--cds-border); background: var(--cds-surface-2); }
+.app-top .brand { font-size: var(--fs-2); }
+.app-top .brand-mark { width: 20px; height: 20px; }
+.app-top .crumb { color: var(--cds-text-secondary); }
+.app-search { margin: 0 auto; width: 34%; height: 28px; display: flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--cds-border); color: var(--cds-text-muted); }
+.app-search kbd { margin-left: auto; font: 500 10px/1 var(--font-mono); padding: 3px 5px; border-radius: var(--radius-sm); background: var(--cds-alpha-1); }
+.svc { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--pill); background: color-mix(in srgb, var(--rc-ok) 12%, transparent); color: var(--rc-ok); font-weight: 600; font-size: var(--fs-1); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+.app-body { display: grid; grid-template-columns: 210px 1fr 330px; height: 560px; }
+.side { border-right: 1px solid var(--cds-border); padding: var(--sp-3) var(--sp-2); background: var(--cds-surface-1); overflow: hidden; }
+.side h4 { margin: var(--sp-3) var(--sp-2) var(--sp-1); font-size: var(--fs-1); font-weight: 500; color: var(--cds-text-muted); }
+.side-item { display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-2); border-radius: var(--radius-md); color: var(--cds-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-item.on { background: var(--cds-alpha-2); color: var(--cds-text-primary); font-weight: 600; }
+.side-item .n { margin-left: auto; font-size: var(--fs-1); color: var(--cds-text-muted); font-weight: 400; }
+.ico { width: 15px; height: 15px; flex: none; color: var(--cds-text-muted); }
+
+.board { position: relative; display: flex; flex-direction: column; min-width: 0; background: var(--cds-surface-1); }
+.board-head { display: flex; align-items: center; gap: var(--sp-3); height: 44px; padding: 0 var(--sp-4); border-bottom: 1px solid var(--cds-border); }
+.board-head b { font-weight: 600; }
+.saved { margin-left: auto; color: var(--rc-ok); font-size: var(--fs-1); }
+.canvas {
+  position: relative; flex: 1; overflow: hidden;
+  background-image: radial-gradient(var(--cds-alpha-3) 1px, transparent 1.2px); background-size: 18px 18px;
+}
+.links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.links path { fill: none; stroke: var(--cds-text-muted); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.links .rel { stroke: var(--cds-clay); stroke-dasharray: 5 4; }
+.links .new { stroke: var(--cds-clay); stroke-dasharray: 5 4; opacity: 0; transition: opacity .3s; }
+.card {
+  position: absolute; width: 41%; padding: var(--sp-3); border-radius: var(--radius-xl); background: var(--cds-surface-2);
+  box-shadow: var(--cds-panel-shadow); transition: box-shadow .2s, transform .3s;
+}
+.card-h { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--fs-1); color: var(--cds-text-muted); }
+.card-h b { min-width: 0; color: var(--cds-text-primary); font-weight: 600; font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-h > span { white-space: nowrap; flex: none; }
+.card p { color: var(--cds-text-secondary); }
+.card.pdf { left: 4%; top: 8%; }
+.card.note { left: 4%; top: 60%; }
+.card.idea { right: 4%; top: 32%; width: 38%; background: color-mix(in srgb, var(--cds-clay) 7%, var(--cds-surface-2)); }
+.card.ghost {
+  right: 4%; top: 72%; width: 38%; background: transparent; box-shadow: none; outline: 1.5px dashed var(--cds-clay); outline-offset: -1px;
+  opacity: 0; transform: translateY(6px); transition: opacity .3s, transform .3s;
+}
+.anchor { background: var(--rc-anchor); border-radius: 3px; padding: 0 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.anchor.active { background: var(--rc-anchor-active); color: var(--cds-text-primary); }
+.anchor.stale { background: var(--rc-anchor-stale); }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: var(--pill); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.tag.clay { background: var(--cds-fill-brand-subtle); color: var(--cds-clay); }
+.tag.warn { background: color-mix(in srgb, var(--rc-warn) 14%, transparent); color: var(--rc-warn); }
+.tag.ok { background: color-mix(in srgb, var(--rc-ok) 14%, transparent); color: var(--rc-ok); }
+.tag.muted { background: var(--cds-alpha-1); color: var(--cds-text-secondary); }
+.edge-label {
+  position: absolute; left: 47.5%; top: 37%; transform: translate(-50%, -50%); z-index: 2;
+  padding: 3px 9px; border-radius: var(--pill); background: var(--cds-surface-2); box-shadow: 0 0 0 1px var(--cds-clay), var(--cds-shadow-sm);
+  font-size: var(--fs-1); font-weight: 600; color: var(--cds-clay); white-space: nowrap;
+}
+.toolbar {
+  position: absolute; left: 50%; bottom: var(--sp-3); transform: translateX(-50%); display: flex; gap: 2px; padding: 4px;
+  border-radius: var(--radius-xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow);
+}
+.toolbar span { display: grid; place-items: center; width: 30px; height: 28px; border-radius: var(--radius-md); color: var(--cds-text-secondary); }
+.toolbar span.on { background: var(--cds-alpha-2); color: var(--cds-text-primary); }
+.toolbar svg { width: 16px; height: 16px; }
+
+.panel { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--cds-border); background: var(--cds-surface-1); }
+.panel-tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--cds-border); }
+.panel-tabs span { flex: 1; text-align: center; padding: 4px 0; border-radius: var(--radius-md); color: var(--cds-text-muted); font-size: var(--fs-1); }
+.panel-tabs span.on { background: var(--cds-surface-2); color: var(--cds-text-primary); font-weight: 600; box-shadow: var(--cds-panel-shadow); }
+.panel-body { flex: 1; overflow: hidden; padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
+.pane { display: none; flex-direction: column; gap: var(--sp-3); }
+.msg-user { align-self: flex-end; max-width: 88%; padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: var(--cds-alpha-2); color: var(--cds-text-primary); }
+.msg-ai p + p { margin-top: 6px; }
+.msg-ai { color: var(--cds-text-secondary); }
+.msg-ai strong { color: var(--cds-text-primary); font-weight: 600; }
+.cite { font: 600 10px/1 var(--font-mono); color: var(--cds-clay); vertical-align: 2px; }
+.materials { display: flex; flex-wrap: wrap; gap: 4px; }
+.box { border-radius: var(--radius-xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); padding: var(--sp-3); }
+.box-h { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); font-weight: 600; color: var(--cds-text-primary); }
+.box-h .tag { margin-left: auto; }
+.kv { display: grid; grid-template-columns: 64px 1fr; gap: 6px var(--sp-2); font-size: var(--fs-1); }
+.kv dt { color: var(--cds-text-muted); }
+.kv dd { margin: 0; color: var(--cds-text-secondary); }
+.actions { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-3); }
+.mini { height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-md); font: 600 var(--fs-1)/1 var(--font-sans); cursor: default; }
+.mini.pri { background: var(--cds-fill-brand); color: #fff; }
+.mini.sec { background: var(--cds-alpha-2); color: var(--cds-text-primary); }
+.diff { padding: var(--sp-2) 10px; border-radius: var(--radius-md); background: var(--cds-alpha-1); color: var(--cds-text-secondary); }
+.diff del { color: var(--diff-del-fg); background: var(--diff-del-bg); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
+.diff ins { color: var(--diff-ins-fg); background: var(--diff-ins-bg); text-decoration: none; border-radius: 3px; padding: 0 2px; }
+
+/* 三个视图的切换：由 .app[data-view] 驱动 */
+.app[data-view="canvas"] .pane-canvas,
+.app[data-view="relation"] .pane-relation,
+.app[data-view="proposal"] .pane-proposal { display: flex; }
+.app[data-view="relation"] .card.idea, .app[data-view="relation"] .card.pdf { box-shadow: 0 0 0 1.5px var(--cds-clay), var(--cds-shadow-md); }
+.app[data-view="proposal"] .card.ghost { opacity: 1; transform: none; }
+.app[data-view="proposal"] .links .new { opacity: 1; }
+.app[data-view="proposal"] .card.note { box-shadow: 0 0 0 1.5px var(--cds-clay), var(--cds-shadow-md); }
+.v-proposal { display: none; }
+.app[data-view="proposal"] .v-proposal { display: inline; }
+.app[data-view="proposal"] .v-default { display: none; }
+
+/* 浮标：指向界面里的具体位置 */
+.callout {
+  position: absolute; z-index: 3; display: flex; align-items: center; gap: var(--sp-2); padding: 8px 14px; border-radius: var(--pill);
+  background: var(--cds-surface-2); box-shadow: 0 0 0 1px var(--cds-border), var(--cds-shadow-lg); font-size: var(--fs-2); font-weight: 600; white-space: nowrap;
+  transition: opacity .25s, transform .25s;
+}
+.callout .dot { width: 8px; height: 8px; }
+.callout.c1 { left: -18px; bottom: 13%; color: var(--cds-text-primary); }
+.callout.c1 .dot { color: var(--cds-clay); }
+.callout.c2 { right: -18px; bottom: 16%; color: var(--cds-text-primary); }
+.callout.c2 .dot { color: var(--rc-ok); }
+.stage[data-view="relation"] .callout.c1, .stage[data-view="proposal"] .callout.c1 { opacity: 0; transform: translateY(4px); }
+.stage[data-view="canvas"] .callout.c2, .stage[data-view="relation"] .callout.c2 { opacity: 0; transform: translateY(4px); }
+.callout.c3 { right: 26%; top: 15%; color: var(--cds-text-primary); }
+.callout.c3 .dot { color: var(--rc-warn); }
+.stage:not([data-view="relation"]) .callout.c3 { opacity: 0; transform: translateY(4px); pointer-events: none; }
+
+/* ---------- 分节 ---------- */
+section { padding: var(--sp-9) 0 0; }
+.eyebrow { font: 600 var(--fs-1)/1 var(--font-mono); letter-spacing: .08em; color: var(--cds-clay); text-transform: uppercase; }
+.sec-h { margin-top: var(--sp-3); font-size: var(--fs-6); line-height: 1.2; font-weight: 700; letter-spacing: -.02em; text-wrap: balance; }
+.sec-sub { margin-top: var(--sp-3); max-width: 40em; color: var(--cds-text-secondary); font-size: var(--fs-4); }
+
+/* 工作流程：四步 */
+.flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-top: var(--sp-7); counter-reset: step; }
+.step { position: relative; padding: var(--sp-5); border-radius: var(--radius-2xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); }
+.step-n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: var(--cds-fill-brand-subtle); color: var(--cds-clay); font: 700 var(--fs-2)/1 var(--font-mono); }
+.step h3 { margin-top: var(--sp-4); font-size: var(--fs-4); font-weight: 650; }
+.step p { margin-top: var(--sp-2); color: var(--cds-text-secondary); font-size: var(--fs-2); }
+.step .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--sp-3); }
+.step-viz { margin-top: var(--sp-4); padding: var(--sp-3); border-radius: var(--radius-lg); background: var(--cds-surface-1); box-shadow: inset 0 0 0 1px var(--cds-border); font-size: var(--fs-2); color: var(--cds-text-secondary); }
+.step-viz .row { display: flex; align-items: center; gap: var(--sp-2); }
+.step-viz .row + .row { margin-top: 6px; }
+
+/* 两个关键承诺：大块对照 */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-7); }
+.big { padding: var(--sp-6); border-radius: var(--radius-2xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); display: flex; flex-direction: column; gap: var(--sp-4); }
+.big h3 { font-size: var(--fs-5); line-height: 1.3; font-weight: 700; letter-spacing: -.01em; }
+.big > p { color: var(--cds-text-secondary); }
+.rel-table { display: grid; grid-template-columns: 76px 1fr; border-radius: var(--radius-lg); overflow: hidden; box-shadow: inset 0 0 0 1px var(--cds-border); font-size: var(--fs-2); }
+.rel-table > * { padding: 9px var(--sp-3); border-top: 1px solid var(--cds-border); }
+.rel-table > :nth-child(-n+2) { border-top: 0; }
+.rel-table dt { color: var(--cds-text-muted); background: var(--cds-surface-1); }
+.rel-table dd { margin: 0; color: var(--cds-text-secondary); }
+.states { display: flex; flex-direction: column; gap: var(--sp-2); }
+.state { display: grid; grid-template-columns: 92px 1fr; align-items: baseline; gap: var(--sp-3); font-size: var(--fs-2); color: var(--cds-text-secondary); }
+.state .tag { justify-self: start; }
+.proposal-steps { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--fs-2); }
+.proposal-steps .arrow { color: var(--cds-text-muted); }
+
+/* 规格：本机与模型 */
+.specs { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); margin-top: var(--sp-7); }
+.spec { padding: var(--sp-5); border-radius: var(--radius-2xl); box-shadow: inset 0 0 0 1px var(--cds-border); }
+.spec h3 { font-size: var(--fs-3); font-weight: 650; }
+.spec ul { margin: var(--sp-3) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-2); color: var(--cds-text-secondary); }
+.spec li { display: flex; gap: var(--sp-2); }
+.spec li::before { content: ""; width: 4px; height: 4px; margin-top: .75em; border-radius: 50%; background: var(--cds-clay); flex: none; }
+
+/* 下载 */
+.dl { margin-top: var(--sp-7); border-radius: var(--radius-2xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); overflow: hidden; }
+.dl-row { display: grid; grid-template-columns: 44px 1.2fr 1.4fr auto; align-items: center; gap: var(--sp-4); padding: var(--sp-5); }
+.dl-row + .dl-row { border-top: 1px solid var(--cds-border); }
+.dl-row.mine { background: color-mix(in srgb, var(--cds-clay) 5%, var(--cds-surface-2)); }
+.os-ico { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--radius-lg); background: var(--cds-surface-1); box-shadow: inset 0 0 0 1px var(--cds-border); color: var(--cds-text-primary); }
+.os-ico svg { width: 22px; height: 22px; }
+.dl-name { font-weight: 650; font-size: var(--fs-4); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.dl-meta { font-size: var(--fs-2); color: var(--cds-text-muted); }
+.dl-file { font-size: var(--fs-2); color: var(--cds-text-secondary); min-width: 0; }
+.dl-file code { display: block; overflow-wrap: anywhere; color: var(--cds-text-primary); }
+.mine-tag { display: none; }
+.dl-row.mine .mine-tag { display: inline-flex; }
+
+.start { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); margin-top: var(--sp-5); }
+.start-step { display: flex; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--radius-xl); box-shadow: inset 0 0 0 1px var(--cds-border); font-size: var(--fs-2); color: var(--cds-text-secondary); }
+.start-step .step-n { flex: none; }
+.start-step b { display: block; color: var(--cds-text-primary); font-size: var(--fs-3); font-weight: 600; margin-bottom: 2px; }
+.notice { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); padding: var(--sp-4); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--rc-warn) 9%, transparent); font-size: var(--fs-2); color: var(--cds-text-secondary); }
+.notice svg { width: 18px; height: 18px; flex: none; color: var(--rc-warn); margin-top: 2px; }
+.notice b { color: var(--cds-text-primary); }
+
+/* 接入 AI */
+.ai-grid { display: grid; grid-template-columns: 1fr 1.25fr; gap: var(--sp-4); margin-top: var(--sp-7); align-items: start; }
+.ai-grid > * { min-width: 0; }
+@media (min-width: 761px) { .partner { position: sticky; top: 84px; } }
+.partner { padding: var(--sp-6); border-radius: var(--radius-2xl); background: color-mix(in srgb, var(--cds-clay) 6%, var(--cds-surface-2)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--cds-clay) 30%, transparent), var(--cds-shadow-sm); display: flex; flex-direction: column; gap: var(--sp-4); }
+.partner-h { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.partner h3 { font-size: var(--fs-5); font-weight: 700; letter-spacing: -.01em; }
+.partner > p { color: var(--cds-text-secondary); }
+.partner .facts { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-steps { display: flex; flex-direction: column; gap: var(--sp-3); }
+.ai-step { display: flex; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--radius-xl); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); font-size: var(--fs-2); color: var(--cds-text-secondary); min-width: 0; }
+.ai-step > div { min-width: 0; flex: 1; }
+.ai-step b { display: block; color: var(--cds-text-primary); font-size: var(--fs-3); font-weight: 600; margin-bottom: 4px; }
+.code { position: relative; margin-top: var(--sp-3); border-radius: var(--radius-lg); background: var(--cds-surface-1); box-shadow: inset 0 0 0 1px var(--cds-border); }
+.code pre { margin: 0; padding: var(--sp-3) var(--sp-4); padding-right: 72px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.7 var(--font-mono); color: var(--cds-text-primary); }
+.copy { position: absolute; top: 8px; right: 8px; height: 26px; padding: 0 10px; border: 0; border-radius: var(--radius-md); background: var(--cds-surface-2); box-shadow: var(--cds-panel-shadow); font: 600 var(--fs-1)/1 var(--font-sans); color: var(--cds-text-secondary); cursor: pointer; }
+.copy:hover { color: var(--cds-text-primary); }
+
+/* 页脚 */
+.foot { margin-top: var(--sp-9); padding: var(--sp-6) 0 var(--sp-7); border-top: 1px solid var(--cds-border); font-size: var(--fs-2); color: var(--cds-text-muted); }
+.foot .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); }
+.foot a { color: var(--cds-text-secondary); text-decoration: none; }
+.foot a:hover { color: var(--cds-text-primary); }
+.foot .sp { margin-left: auto; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 1080px) {
+  .app-body { grid-template-columns: 1fr 320px; }
+  .side { display: none; }
+  .callout.c1 { left: 8px; }
+  .callout.c2 { right: 8px; }
+  .flow { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 760px) {
+  :root { --sp-8: 48px; --sp-9: 72px; }
+  .nav-links { display: none; }
+  .nav .btn-sm { margin-left: auto; }
+  .hero { padding-top: var(--sp-7); }
+  .hero .lede { font-size: var(--fs-3); }
+  .cta .btn { flex: 1 1 100%; justify-content: center; }
+  .seg { margin-top: var(--sp-7); }
+  .stage { width: calc(100% - 2 * var(--sp-4)); }
+  .callout { display: none; }
+  .app-search, .app-top .crumb, .app-top .icon-btn { display: none; }
+  .svc { margin-left: auto; }
+  .app-body { display: block; height: auto; }
+  .board-head .hide-sm { display: none; }
+  /* 画布改成纵向堆叠，保持字号可读 */
+  .canvas { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-3) 64px; }
+  .links { display: none; }
+  .card, .card.idea, .card.ghost { position: static; width: auto; }
+  .card.ghost { display: none; }
+  .app[data-view="proposal"] .card.ghost { display: block; }
+  .edge-label { position: static; transform: none; align-self: center; order: 2; }
+  .card.pdf { order: 1; } .card.idea { order: 3; } .card.note { order: 4; } .card.ghost { order: 5; }
+  .panel { border-left: 0; border-top: 1px solid var(--cds-border); }
+  .flow, .pair, .specs, .start, .ai-grid { grid-template-columns: 1fr; }
+  .partner { padding: var(--sp-5); }
+  .big { padding: var(--sp-5); }
+  .dl-row { grid-template-columns: 44px 1fr; gap: var(--sp-3) var(--sp-4); }
+  .dl-file { grid-column: 1 / -1; }
+  .dl-row .btn { grid-column: 1 / -1; justify-content: center; }
+  .foot .sp { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="mark" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#d97757"/><path d="M9 22V10h7.5a4 4 0 0 1 0 8H9m7-0 5 4" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gh" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></g></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5M9.5 13h5M9.5 16.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+  <symbol id="i-idea" viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5z M15 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-canvas" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/><path d="M10 7h4a3 3 0 0 1 3 3v4"/></g></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></g></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M5 3l6 17 2.5-7.5L21 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-frame" viewBox="0 0 24 24"><path d="M7 3v18M17 3v18M3 7h18M3 17h18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20c4-1 7-4 9-8l3-6 2 2-6 3c-4 2-7 5-8 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-apple" viewBox="0 0 24 24"><path fill="currentColor" d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.5 4.5 0 0 0-3.6-1.9c-1.5-.2-3 .9-3.7.9-.8 0-2-.9-3.2-.9a4.8 4.8 0 0 0-4 2.5c-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4a10.7 10.7 0 0 0 1.4-2.8 4.3 4.3 0 0 1-2.5-3.9ZM14 5.5A4.3 4.3 0 0 0 15 2.4a4.4 4.4 0 0 0-2.9 1.5 4.1 4.1 0 0 0-1 3 3.6 3.6 0 0 0 2.9-1.4Z"/></symbol>
+  <symbol id="i-win" viewBox="0 0 24 24"><path fill="currentColor" d="M3 5.5 10 4.5v7H3zM11 4.4 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z"/></symbol>
+  <symbol id="i-linux" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="m7 9 3 2.5L7 14M12 14h5"/></g></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19zM12 10v4.5M12 17.5v.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="brand-mark"><use href="#mark"/></svg>Research Canvas</a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#how">怎么用</a>
+      <a href="#trust">研究关系与提案</a>
+      <a href="#download">下载</a>
+      <a href="#ai">接入 AI</a>
+      <a href="https://github.com/Proton1917/Research_Canvas" rel="noopener">GitHub</a>
+    </nav>
+    <button class="icon-btn" id="theme" type="button" aria-label="切换深浅色"><svg><use href="#i-moon"/></svg></button>
+    <a class="btn btn-primary btn-sm" href="#download">下载</a>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ================= 首屏 ================= -->
+  <section class="hero" style="padding-top:var(--sp-8)">
+    <div class="wrap">
+      <span class="chip"><span class="ver">0.1.4</span><b>开源</b> · 在你自己的电脑上运行</span>
+      <h1>把文稿、公式和 AI 讨论<br>放进<em>同一张画布</em></h1>
+      <p class="lede">导入 PDF、Markdown 和 Notebook，标出关键片段，把想法和来源连成研究关系。AI 提出的改动先进提案，你点了确认才写入。</p>
+      <div class="cta">
+        <a class="btn btn-primary" id="cta-main" href="#download"><svg><use href="#i-down"/></svg><span id="cta-label">下载 Research Canvas</span></a>
+        <a class="btn btn-secondary" href="https://github.com/Proton1917/Research_Canvas" rel="noopener"><svg><use href="#i-gh"/></svg>查看源码</a>
+      </div>
+      <p class="cta-note" id="cta-note">macOS（Apple Silicon）、Windows x64、Linux x64 · 解压即用，不用安装</p>
+    </div>
+
+    <div class="seg" role="tablist" aria-label="切换示意视图">
+      <button role="tab" aria-selected="true" data-v="canvas">画布</button>
+      <button role="tab" aria-selected="false" data-v="relation">研究关系</button>
+      <button role="tab" aria-selected="false" data-v="proposal">改动提案</button>
+    </div>
+
+    <div class="stage" id="stage" data-view="canvas">
+      <div class="callout c1"><span class="dot"></span>选段带锚点，讨论引用到原句</div>
+      <div class="callout c2"><span class="dot"></span>确认之后才写入画布</div>
+      <div class="callout c3"><span class="dot"></span>关系先存为「候选」</div>
+
+      <div class="app" id="app" data-view="canvas" aria-label="Research Canvas 界面示意">
+        <div class="app-top">
+          <span class="brand"><svg class="brand-mark"><use href="#mark"/></svg>Research Canvas</span>
+          <span class="crumb">复分析 · 单叶函数</span>
+          <span class="app-search"><svg class="ico"><use href="#i-search"/></svg>检索文稿与讨论<kbd>⌘K</kbd></span>
+          <span class="svc"><span class="dot"></span>服务就绪</span>
+          <span class="icon-btn" aria-hidden="true"><svg><use href="#i-moon"/></svg></span>
+        </div>
+
+        <div class="app-body">
+          <aside class="side" aria-hidden="true">
+            <div class="side-item" style="font-weight:600;color:var(--cds-text-primary)">＋ 新文稿</div>
+            <h4>画布</h4>
+            <div class="side-item on"><svg class="ico"><use href="#i-canvas"/></svg>Hurwitz 与单叶性<span class="n">4</span></div>
+            <div class="side-item"><svg class="ico"><use href="#i-canvas"/></svg>Riemann 映射定理<span class="n">7</span></div>
+            <h4>项目 · 1</h4>
+            <div class="side-item"><svg class="ico"><use href="#i-folder"/></svg>complex-analysis/</div>
+            <div class="side-item" style="padding-left:28px"><svg class="ico"><use href="#i-pdf"/></svg>ahlfors-ch5.pdf</div>
+            <div class="side-item" style="padding-left:28px"><svg class="ico"><use href="#i-doc"/></svg>hurwitz-notes.md</div>
+            <div class="side-item" style="padding-left:28px"><svg class="ico"><use href="#i-doc"/></svg>exercises.ipynb</div>
+            <h4>讨论</h4>
+            <div class="side-item"><svg class="ico"><use href="#i-doc"/></svg>单叶极限能否退化？</div>
+          </aside>
+
+          <div class="board">
+            <div class="board-head">
+              <svg class="ico"><use href="#i-canvas"/></svg><b>Hurwitz 与单叶性</b>
+              <span class="saved hide-sm">已保存 · 布局 3</span>
+            </div>
+            <div class="canvas">
+              <svg class="links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <path class="rel" d="M45 22 C 52 22, 52 44, 58 44"/>
+                <path d="M24 38 L 24 60"/>
+                <path class="new" d="M77 51 L 77 72"/>
+              </svg>
+
+              <article class="card pdf">
+                <div class="card-h"><svg class="ico"><use href="#i-pdf"/></svg><b>Ahlfors · Complex Analysis §5.1</b><span style="margin-left:auto">第 178 页</span></div>
+                <p><span class="anchor active">若 <span class="math">f<sub>n</sub></span> 在区域 <span class="math">Ω</span> 内全纯且无零点，并局部一致收敛到 <span class="math">f</span>，则 <span class="math">f</span> 恒为零或处处无零点。</span></p>
+              </article>
+
+              <span class="edge-label">待验证 · 结构候选</span>
+
+              <article class="card idea">
+                <div class="card-h"><svg class="ico"><use href="#i-idea"/></svg><b>想法</b></div>
+                <p style="color:var(--cds-text-primary)">把 <span class="math">f<sub>n</sub>(z) − f<sub>n</sub>(z<sub>0</sub>)</span> 放进 Hurwitz，能不能得到单叶函数列的极限仍单叶？</p>
+              </article>
+
+              <article class="card note">
+                <div class="card-h"><svg class="ico"><use href="#i-doc"/></svg><b>hurwitz-notes.md</b><span class="tag muted" style="margin-left:auto">v4</span></div>
+                <p><span class="v-default">推论：单叶函数列的局部一致极限<span class="anchor stale">是单叶的</span>。</span><span class="v-proposal">推论：单叶函数列的局部一致极限<span class="anchor active">要么单叶，要么为常数</span>。</span></p>
+              </article>
+
+              <article class="card ghost" aria-hidden="true">
+                <div class="card-h"><svg class="ico"><use href="#i-doc"/></svg><b>反例：<span class="math">f<sub>n</sub>(z) = z / n</span></b><span class="tag clay" style="margin-left:auto">提案新建</span></div>
+                <p>每个 <span class="math">f<sub>n</sub></span> 都单叶，极限 <span class="math">f ≡ 0</span> 是常数。</p>
+              </article>
+
+              <div class="toolbar" aria-hidden="true">
+                <span class="on"><svg><use href="#i-cursor"/></svg></span><span><svg><use href="#i-frame"/></svg></span><span><svg><use href="#i-pen"/></svg></span><span><svg><use href="#i-link"/></svg></span>
+              </div>
+            </div>
+          </div>
+
+          <aside class="panel">
+            <div class="panel-tabs" aria-hidden="true">
+              <span class="t-d on">讨论</span><span>批注</span><span class="t-r">关系</span><span>版本</span><span>运行</span>
+            </div>
+            <div class="panel-body">
+              <!-- 视图一：讨论 -->
+              <div class="pane pane-canvas">
+                <div class="materials"><span class="tag clay">[1] Ahlfors 第 178 页</span><span class="tag clay">[2] 想法</span></div>
+                <div class="msg-user">这条想法成立吗？需要补什么条件？</div>
+                <div class="msg-ai">
+                  <p>思路成立。固定 <span class="math">z<sub>0</sub></span>，对 <span class="math">g<sub>n</sub> = f<sub>n</sub> − f<sub>n</sub>(z<sub>0</sub>)</span> 在 <span class="math">Ω∖{z<sub>0</sub>}</span> 上用 Hurwitz <span class="cite">[1]</span>，得到 <span class="math">f</span> 在该处只能恒为常数或不取 <span class="math">f(z<sub>0</sub>)</span>。</p>
+                  <p><strong>还缺一步：</strong>结论应写成「单叶<em>或常数</em>」，你笔记里的推论漏了常数情形 <span class="cite">[2]</span>。</p>
+                </div>
+              </div>
+              <!-- 视图二：关系 -->
+              <div class="pane pane-relation">
+                <div class="box">
+                  <div class="box-h">Hurwitz 定理 → 单叶极限<span class="tag warn">候选</span></div>
+                  <dl class="kv">
+                    <dt>对应</dt><dd>零点个数 ↔ 取值重数</dd>
+                    <dt>条件</dt><dd><span class="math">Ω</span> 连通；局部一致收敛</dd>
+                    <dt>反例</dt><dd><span class="math">z / n → 0</span>，极限为常数</dd>
+                    <dt>缺证明</dt><dd>辐角原理的计数版本 <span class="cite">[1]</span></dd>
+                    <dt>下一步</dt><dd>核对 Ahlfors §5.1 定理 2 的叙述</dd>
+                  </dl>
+                </div>
+                <div class="materials"><span class="tag muted">起点：选段 · Ahlfors 第 178 页</span><span class="tag muted">终点：想法</span></div>
+              </div>
+              <!-- 视图三：提案 -->
+              <div class="pane pane-proposal">
+                <div class="box">
+                  <div class="box-h">提案 · 2 项改动<span class="tag clay">待确认</span></div>
+                  <div style="font-size:var(--fs-1);color:var(--cds-text-muted);margin-bottom:6px">改写 hurwitz-notes.md 选段</div>
+                  <div class="diff">局部一致极限<del>是单叶的</del><ins>要么单叶，要么为常数</ins>。</div>
+                  <div style="font-size:var(--fs-1);color:var(--cds-text-muted);margin:10px 0 6px">新建文稿</div>
+                  <div class="diff">反例：<span class="math">f<sub>n</sub>(z) = z / n</span></div>
+                  <div class="actions"><button class="mini sec" tabindex="-1">不采用</button><button class="mini pri" tabindex="-1">确认写入</button></div>
+                </div>
+                <div style="font-size:var(--fs-1);color:var(--cds-text-muted)">确认前画布和文稿都不会变；采用后留在「版本」里，随时能退回。</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 四步 ================= -->
+  <section id="how">
+    <div class="wrap">
+      <p class="eyebrow">怎么用</p>
+      <h2 class="sec-h"><span class="nb">从一堆材料，</span><span class="nb">到一张能追溯来源的研究图</span></h2>
+      <div class="flow">
+        <div class="step">
+          <span class="step-n">1</span>
+          <h3>导入材料</h3>
+          <p>整个项目文件夹导进来，目录和相对路径原样保留。</p>
+          <div class="chips"><span class="tag muted">PDF</span><span class="tag muted">Markdown</span><span class="tag muted">Notebook</span><span class="tag muted">Word / Excel / PPT</span><span class="tag muted">图片</span><span class="tag muted">JSON</span></div>
+        </div>
+        <div class="step">
+          <span class="step-n">2</span>
+          <h3>标出片段</h3>
+          <p>在文稿里选中段落或公式，片段带着锚点留在画布上。</p>
+          <div class="step-viz">
+            <div class="row"><span class="anchor active">已锚定的选段</span></div>
+            <div class="row"><span class="anchor stale">原文改过，锚点标黄</span></div>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-n">3</span>
+          <h3>就选段讨论</h3>
+          <p>围绕选中的材料提问，回答按来源编号引用；讨论本身也存成文稿，可以继续分叉。</p>
+          <div class="step-viz">…局部一致收敛 <span class="cite">[1]</span>，缺常数情形 <span class="cite">[2]</span></div>
+        </div>
+        <div class="step">
+          <span class="step-n">4</span>
+          <h3>导出与归档</h3>
+          <p>工作区能导出成 JSON 或 ZIP 归档，换电脑、升级版本时原样恢复。</p>
+          <div class="chips"><span class="tag ok">JSON</span><span class="tag ok">ZIP</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 两个承诺 ================= -->
+  <section id="trust">
+    <div class="wrap">
+      <p class="eyebrow">研究关系与提案</p>
+      <h2 class="sec-h"><span class="nb">AI 给的是可审阅的建议，</span><span class="nb">不是直接改你的稿子</span></h2>
+      <div class="pair">
+        <div class="big">
+          <h3>研究关系写清条件和缺口</h3>
+          <p>两份材料之间的联系先存成候选，按证据分成三档，每条都拆成同样的五栏。</p>
+          <div class="states">
+            <div class="state"><span class="tag muted">启发性类比</span>只是看起来相似，还没有对应的运算</div>
+            <div class="state"><span class="tag warn">待验证候选</span>结构对得上，证明或文献还缺</div>
+            <div class="state"><span class="tag ok">有论证支持</span>工作区里的材料已经给出论证</div>
+          </div>
+          <dl class="rel-table">
+            <dt>对应</dt><dd>两边哪个对象对应哪个</dd>
+            <dt>条件</dt><dd>在什么前提下成立</dd>
+            <dt>反例</dt><dd>已知会失效的情形</dd>
+            <dt>缺证明</dt><dd>工作区里还没有的文献</dd>
+            <dt>下一步</dt><dd>要核对的定义、运算和出处</dd>
+          </dl>
+        </div>
+        <div class="big">
+          <h3>每一处改动都要你点头</h3>
+          <p>改写选段、新建文稿、移动卡片、连新关系，AI 都只能提出来。确认之前，画布和原文一个字都不动。</p>
+          <div class="proposal-steps">
+            <span class="tag clay">AI 提案</span><span class="arrow">→</span><span class="tag muted">你看对比</span><span class="arrow">→</span><span class="tag ok">确认写入</span>
+          </div>
+          <div class="diff" style="font-size:var(--fs-2)">局部一致极限<del>是单叶的</del><ins>要么单叶，要么为常数</ins>。</div>
+          <div class="states">
+            <div class="state"><span class="tag muted">改动范围</span>只能动你选中的卡片和位置</div>
+            <div class="state"><span class="tag muted">同一文稿</span>一次提案里最多改一处选段</div>
+            <div class="state"><span class="tag muted">版本冲突</span>你本地的编辑先留着，再按提示合并</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 本机与模型 ================= -->
+  <section>
+    <div class="wrap">
+      <p class="eyebrow">本机运行</p>
+      <h2 class="sec-h"><span class="nb">数据在你的电脑里，</span><span class="nb">模型由你来选</span></h2>
+      <div class="specs">
+        <div class="spec">
+          <h3>数据只存本机</h3>
+          <ul>
+            <li>服务开在 <code>127.0.0.1:8787</code>，用浏览器打开</li>
+            <li>工作区、文稿、PDF、讨论和历史版本都在解压目录的一个 SQLite 文件里</li>
+            <li>PDF、Excel、PPT 的文字由程序内置解析，不上传</li>
+          </ul>
+        </div>
+        <div class="spec">
+          <h3>接你自己的模型</h3>
+          <ul>
+            <li>支持 Anthropic Messages 和 Chat Completions 两种接口协议</li>
+            <li>点击「设置 → 模型服务」，填写地址、API Key 和模型</li>
+            <li>设置保存在本机，保存后立即生效</li>
+            <li>还没有模型服务？<a href="#ai" style="color:var(--cds-clay)">用合作中转站接入</a></li>
+          </ul>
+        </div>
+        <div class="spec">
+          <h3>开源</h3>
+          <ul>
+            <li>项目代码采用 MPL-2.0 许可</li>
+            <li>每个发行包注明构建所用的源码提交</li>
+            <li>Rust 后端 + 网页界面，可以自己从源码构建</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 下载 ================= -->
+  <section id="download">
+    <div class="wrap">
+      <p class="eyebrow">下载</p>
+      <h2 class="sec-h"><span class="nb">选你的系统，</span><span class="nb">解压后双击启动</span></h2>
+      <div class="dl">
+        <div class="dl-row" data-os="mac">
+          <span class="os-ico"><svg><use href="#i-apple"/></svg></span>
+          <div><div class="dl-name">macOS <span class="tag clay mine-tag">你的系统</span></div><div class="dl-meta">Apple Silicon（M 系列）· macOS 13 及以上</div></div>
+          <div class="dl-file"><code>research-canvas-0.1.4-macos-arm64.zip</code>20.1 MB · 0.1.4</div>
+          <a class="btn btn-primary" href="https://mathana.homes/downloads/research-canvas/0.1.4/research-canvas-0.1.4-macos-arm64.zip" download><svg><use href="#i-down"/></svg>下载</a>
+        </div>
+        <div class="dl-row" data-os="win">
+          <span class="os-ico"><svg><use href="#i-win"/></svg></span>
+          <div><div class="dl-name">Windows <span class="tag clay mine-tag">你的系统</span></div><div class="dl-meta">Windows 10 / 11 · x64</div></div>
+          <div class="dl-file"><code>research-canvas-0.1.4-windows-x64.zip</code>19.9 MB · 0.1.4</div>
+          <a class="btn btn-primary" href="https://mathana.homes/downloads/research-canvas/0.1.4/research-canvas-0.1.4-windows-x64.zip" download><svg><use href="#i-down"/></svg>下载</a>
+        </div>
+        <div class="dl-row" data-os="linux">
+          <span class="os-ico"><svg><use href="#i-linux"/></svg></span>
+          <div><div class="dl-name">Linux <span class="tag clay mine-tag">你的系统</span></div><div class="dl-meta">x64 · glibc 2.35 及以上（如 Ubuntu 22.04）</div></div>
+          <div class="dl-file"><code>research-canvas-0.1.0-linux-x64.tar.gz</code>0.1.0 · 在 GitHub 发行页下载</div>
+          <a class="btn btn-secondary" href="https://github.com/Proton1917/Research_Canvas/releases/tag/v0.1.0" rel="noopener"><svg><use href="#i-gh"/></svg>前往 GitHub</a>
+        </div>
+      </div>
+
+      <div class="start">
+        <div class="start-step"><span class="step-n">1</span><div><b>完整解压</b>放到「文稿」这类可写的目录，程序和数据都在里面</div></div>
+        <div class="start-step"><span class="step-n">2</span><div><b>双击启动</b>macOS 打开 <code>Start.command</code>，Windows 打开 <code>start.cmd</code>，Linux 运行 <code>bash start.sh</code></div></div>
+        <div class="start-step"><span class="step-n">3</span><div><b>浏览器打开</b><code>http://127.0.0.1:8787</code>，用完回到启动窗口按 <code>Ctrl+C</code></div></div>
+      </div>
+      <div class="notice">
+        <svg><use href="#i-warn"/></svg>
+        <div><b>macOS 首次打开被拦截？</b>这个版本还没做 Apple 公证。确认文件来自本站或 GitHub 仓库后，到「系统设置 → 隐私与安全性」里点「仍要打开」。</div>
+      </div>
+    </div>
+  </section>
+  <!-- ================= 接入 AI ================= -->
+  <section id="ai">
+    <div class="wrap">
+      <p class="eyebrow">接入 AI</p>
+      <h2 class="sec-h"><span class="nb">讨论、改写和画布提案</span><span class="nb">都要接一个模型服务</span></h2>
+      <p class="sec-sub">导入、编辑、画布和导出在本机完成。使用 0.1.4 的「设置 → 模型服务」填写接入信息，选择模型后即可发起讨论。</p>
+      <div class="ai-grid">
+        <div class="partner">
+          <div class="partner-h"><span class="tag clay">合作中转站</span><span class="tag muted">推荐</span></div>
+          <h3>rest2build</h3>
+          <p>一个 Key 同时支持 Research Canvas 用到的两种接口，注册后在控制台自助创建。</p>
+          <div class="facts"><span class="tag ok">Chat Completions</span><span class="tag ok">Anthropic Messages</span><span class="tag muted">模型列表接口</span></div>
+          <a class="btn btn-primary" href="https://www.ai.rest2build.lol/" target="_blank" rel="noopener" style="align-self:flex-start">前往 rest2build 获取 Key</a>
+          <p style="font-size:var(--fs-2);color:var(--cds-text-muted)">也可以换成任何支持这两种接口之一的模型服务，改第 2 步里的地址和模型名即可。画布提案要求模型支持工具调用。</p>
+        </div>
+
+        <div class="ai-steps">
+          <div class="ai-step"><span class="step-n">1</span><div><b>创建 API Key</b>在 rest2build 或你选择的模型服务控制台创建 Key，准备好该服务的 API 基础地址。</div></div>
+          <div class="ai-step"><span class="step-n">2</span><div><b>打开模型服务设置</b>启动 Research Canvas，点击顶栏「设置 → 模型服务」。使用 rest2build 时选择 <code>Chat Completions</code>，填写下面的 API 基础地址，再粘贴 API Key。
+            <div class="code"><button class="copy" type="button" data-copy="api-base">复制</button><pre id="api-base">https://www.ai.rest2build.lol/v1</pre></div>
+          </div></div>
+          <div class="ai-step"><span class="step-n">3</span><div><b>读取目录并选择模型</b>点击「测试连接并读取模型」，选择默认模型和启用模型，也可手动填写模型 ID。需要读取图片时，将服务支持视觉的模型加入图像模型列表。目录状态会显示在模型选项中。</div></div>
+          <div class="ai-step"><span class="step-n">4</span><div><b>保存并发起讨论</b>点击「保存」后立即生效。选取研究材料，发送一个问题，通过运行状态和回答确认生成结果。连接失败时可以展开中文提示下的详细原因。
+            <p style="margin-top:var(--sp-3);font-size:var(--fs-2);color:var(--cds-text-muted)">API Key 随设置保存在本机 <code>config/server.local.toml</code> 中，升级时连同数据一起迁移。</p>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <a class="brand" href="#top" style="color:var(--cds-text-primary)"><svg class="brand-mark" style="width:20px;height:20px"><use href="#mark"/></svg>Research Canvas</a>
+    <span>0.1.4 · 源码提交 <span class="mono">04f81e8</span></span>
+    <span>MPL-2.0</span>
+    <a class="sp" href="https://github.com/Proton1917/Research_Canvas" rel="noopener">GitHub</a>
+    <a href="https://github.com/Proton1917/Research_Canvas/releases" rel="noopener">全部版本</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  // 深浅色：与产品共用 rc:theme
+  var themeBtn = document.getElementById('theme');
+  function syncIcon() { themeBtn.querySelector('use').setAttribute('href', root.classList.contains('dark') ? '#i-sun' : '#i-moon'); }
+  syncIcon();
+  themeBtn.addEventListener('click', function () {
+    var dark = root.classList.toggle('dark');
+    try { localStorage.setItem('rc:theme', dark ? 'dark' : 'light'); } catch (e) {}
+    syncIcon();
+  });
+
+  // 顶栏滚动后出分隔线
+  var nav = document.getElementById('nav');
+  addEventListener('scroll', function () { nav.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
+
+  // 示意视图切换
+  var app = document.getElementById('app'), stage = document.getElementById('stage');
+  var tabs = document.querySelectorAll('.seg button');
+  var tabD = app.querySelector('.t-d'), tabR = app.querySelector('.t-r');
+  var timer = null, userTouched = false;
+  function show(v) {
+    app.dataset.view = v; stage.dataset.view = v;
+    tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.v === v)); });
+    tabD.classList.toggle('on', v !== 'relation'); tabR.classList.toggle('on', v === 'relation');
+  }
+  tabs.forEach(function (b) { b.addEventListener('click', function () { userTouched = true; clearInterval(timer); show(b.dataset.v); }); });
+  var order = ['canvas', 'relation', 'proposal'];
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    timer = setInterval(function () { if (userTouched || document.hidden) return; show(order[(order.indexOf(app.dataset.view) + 1) % 3]); }, 5200);
+  }
+
+  // 复制按钮
+  document.querySelectorAll('.copy').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var text = document.getElementById(b.dataset.copy).innerText;
+      var done = function () { b.textContent = '已复制'; setTimeout(function () { b.textContent = '复制'; }, 1600); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () { b.textContent = '请手动选中复制'; });
+      else b.textContent = '请手动选中复制';
+    });
+  });
+  // 按访问者系统把对应下载放在主按钮上
+  var ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  var os = /Win/i.test(plat) || /Windows/i.test(ua) ? 'win' : /Mac/i.test(plat) || /Mac OS X/i.test(ua) ? 'mac' : /Linux/i.test(plat) && !/Android/i.test(ua) ? 'linux' : null;
+  if (/iPhone|iPad|Android/i.test(ua)) os = null;
+  var labels = { mac: '下载 macOS 版', win: '下载 Windows 版', linux: '下载 Linux 版' };
+  if (os) {
+    var row = document.querySelector('.dl-row[data-os="' + os + '"]');
+    row.classList.add('mine');
+    document.querySelectorAll('.dl-row:not(.mine) .btn-primary').forEach(function (b) { b.classList.replace('btn-primary', 'btn-secondary'); });
+    row.parentNode.insertBefore(row, row.parentNode.firstChild);
+    var main = document.getElementById('cta-main');
+    main.href = row.querySelector('a').href;
+    if (os !== 'linux') main.setAttribute('download', '');
+    document.getElementById('cta-label').textContent = labels[os];
+    document.getElementById('cta-note').innerHTML = (os === 'mac' ? 'Apple Silicon · 20.1 MB' : os === 'win' ? 'x64 · 19.9 MB' : '0.1.0 · GitHub 发行页') + ' · 解压即用 · <a href="#download">其他系统</a>';
+  }
+})();
+</script>
+</body>
+</html>

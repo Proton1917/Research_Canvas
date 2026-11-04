@@ -4,7 +4,7 @@ Research Canvas 0.1.4 提供 Windows x64 与 macOS Apple Silicon 发行包，Lin
 
 ## 下载与选择
 
-打开 [GitHub Releases](https://github.com/Proton1917/Research_Canvas/releases)，下载适合当前系统和处理器的文件。
+打开 [Research Canvas 下载页面](https://mathana.homes/#download)，下载适合当前系统和处理器的文件。历史版本与源码可在 [GitHub Releases](https://github.com/Proton1917/Research_Canvas/releases) 获取。
 
 | 系统 | 发行文件 | 启动入口 |
 | --- | --- | --- |
